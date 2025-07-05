@@ -3,13 +3,20 @@ export interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  // ✨ NOVO: Campos para mensagens temporárias
+  conversationId?: string;
+  isProcessing?: boolean;
 }
 
 export interface Checkpoint {
   id: string;
   name: string;
-  messages: Message[];
+  messages?: Message[];
   createdAt: string;
+  // Campos adicionais da API
+  last_message_sequence?: number;
+  created_at?: string;
+  conversation_id?: string;
 }
 
 export interface Conversation {

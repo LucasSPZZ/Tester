@@ -57,8 +57,8 @@ export const AIPromptInput: React.FC<AIPromptInputProps> = ({
   React.useEffect(() => {
     if (showBackendStatus) {
       checkBackendStatus();
-      const interval = setInterval(checkBackendStatus, 30000); // Check every 30s
-      return () => clearInterval(interval);
+      // Removido o setInterval para evitar health checks duplicados
+      // O status do backend é gerenciado globalmente no PromptTester
     }
   }, [showBackendStatus]);
 

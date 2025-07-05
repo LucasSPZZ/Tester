@@ -1,23 +1,78 @@
 const express = require('express');
 const cors = require('cors');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
+// Middlewares
 app.use(cors());
-app.use(express.json({ limit: '10mb' })); // Aumentar limite para schema grandes
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Inicializar Gemini AI
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// 🔧 CONFIGURAÇÃO OPENROUTER
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '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';
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
-/* 
-MODELOS UTILIZADOS:
-- gemini-2.5-pro: Para geração de código SQL (máxima qualidade e precisão)
-- gemini-2.5-flash: Para entendimento de funções (máxima velocidade e eficiência)
-*/
+// Mapeamento de modelos Gemini para OpenRouter
+const MODEL_MAPPING = {
+  'gemini-1.5-pro': 'google/gemini-pro-1.5',
+  'gemini-1.5-flash': 'google/gemini-flash-1.5',
+  'gemini-2.0-flash': 'google/gemini-2.0-flash-exp',
+  'gemini-2.5-pro': 'google/gemini-2.0-flash-exp', // Fallback
+  'gemini-2.5-flash': 'google/gemini-flash-1.5' // Fallback
+};
+
+// Função para fazer requisições ao OpenRouter
+async function callOpenRouter(messages, model = 'google/gemini-flash-1.5', options = {}) {
+  const payload = {
+    model: MODEL_MAPPING[model] || model,
+    messages: messages,
+    temperature: options.temperature || 0.7,
+    max_tokens: options.maxTokens || 4096,
+    stream: false
+  };
+
+  console.log('📤 [OpenRouter] Enviando requisição:', {
+    model: payload.model,
+    messagesCount: messages.length,
+    temperature: payload.temperature
+  });
+
+  const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'http://localhost:3001',
+      'X-Title': 'RPCraft Backend'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('❌ [OpenRouter] Erro na requisição:', {
+      status: response.status,
+      statusText: response.statusText,
+      error: errorText
+    });
+    throw new Error(`OpenRouter API Error: ${response.status} - ${errorText}`);
+  }
+
+  const result = await response.json();
+  console.log('✅ [OpenRouter] Resposta recebida:', {
+    usage: result.usage,
+    model: result.model
+  });
+
+  return {
+    text: () => result.choices[0].message.content,
+    response: {
+      usageMetadata: result.usage
+    }
+  };
+}
 
 // System prompt base
 const SYSTEM_PROMPT = `Você é o "RPCraft AI", um assistente de desenvolvimento especialista em PostgreSQL e Supabase. Sua única função é gerar código SQL (PL/pgSQL) para criar ou modificar funções RPC. Você deve seguir estas regras rigorosamente:
@@ -237,7 +292,7 @@ app.post('/api/generate-sql', async (req, res) => {
     
     // Configurar o modelo Gemini
     const model = customGenAI.getGenerativeModel({ 
-      model: "gemini-2.5-pro",
+      model: "gemini-1.5-pro",
       generationConfig: {
         temperature: 0.1, // Baixa temperatura para código mais consistente
         maxOutputTokens: 8192,
@@ -301,27 +356,77 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    service: 'RPCraft Backend'
+    service: 'RPCraft Backend (OpenRouter)',
+    openrouter_configured: !!OPENROUTER_API_KEY
   });
 });
 
-// Endpoint para testar a API do Gemini
-app.get('/api/test-gemini', async (req, res) => {
-  console.log('🧪 Teste do Gemini solicitado');
+// Endpoint para testar a API do OpenRouter
+app.get('/api/test-openrouter', async (req, res) => {
+  console.log('🧪 Teste do OpenRouter solicitado');
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-    const result = await model.generateContent("Responda apenas 'OK' se você está funcionando.");
-    const response = await result.response;
+    const testMessages = [
+      {
+        role: 'system',
+        content: 'Você é um assistente útil.'
+      },
+      {
+        role: 'user',
+        content: 'Responda apenas "OK" se você está funcionando.'
+      }
+    ];
+
+    const result = await callOpenRouter(testMessages, 'gemini-1.5-flash', {
+      temperature: 0.1,
+      maxTokens: 50
+    });
     
-    console.log('✅ Gemini Flash respondeu:', response.text());
+    const response = result.text();
+    console.log('✅ OpenRouter respondeu:', response);
     
     res.json({
       success: true,
-      response: response.text(),
-      message: 'Gemini API está funcionando corretamente'
+      response: response,
+      message: 'OpenRouter API está funcionando corretamente',
+      model_used: 'google/gemini-flash-1.5'
     });
   } catch (error) {
-    console.log('❌ Erro no teste do Gemini:', error.message);
+    console.log('❌ Erro no teste do OpenRouter:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: 'Falha na conexão com OpenRouter'
+    });
+  }
+});
+
+// Endpoint legado - manter compatibilidade
+app.get('/api/test-gemini', async (req, res) => {
+  console.log('🔄 Redirecionando teste Gemini para OpenRouter...');
+  
+  // Redirecionar para o teste do OpenRouter
+  try {
+    const testMessages = [
+      {
+        role: 'system', 
+        content: 'Você é um assistente útil.'
+      },
+      {
+        role: 'user',
+        content: 'Responda apenas "OK" se você está funcionando.'
+      }
+    ];
+
+    const result = await callOpenRouter(testMessages, 'gemini-1.5-flash');
+    const response = result.text();
+    
+    res.json({
+      success: true,
+      response: response,
+      message: 'OpenRouter (Gemini) está funcionando corretamente',
+      note: 'Usando OpenRouter como proxy para Gemini'
+    });
+  } catch (error) {
     res.status(500).json({
       success: false,
       error: error.message
@@ -386,7 +491,7 @@ app.post('/api/understand-function', async (req, res) => {
     // LOG: Prompt completo enviado para a LLM
     console.log('\n📤 PROMPT COMPLETO ENVIADO PARA GEMINI FLASH (UNDERSTAND):');
     console.log('ℹ️  CONTEXTO: Apenas schema das tabelas (sem código de outras funções)');
-    console.log('⚡ MODELO: gemini-2.5-flash (otimizado para velocidade)');
+    console.log('⚡ MODELO: gemini-1.5-flash (otimizado para velocidade)');
     console.log('-'.repeat(80));
     console.log(fullPrompt);
     console.log('-'.repeat(80));
@@ -395,14 +500,14 @@ app.post('/api/understand-function', async (req, res) => {
     
     // Configurar o modelo Gemini
     const model = customGenAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash", // Usando Flash para entendimento (mais rápido e barato)
+      model: "gemini-1.5-flash", // Usando Flash para entendimento (mais rápido e barato)
       generationConfig: {
         temperature: 0.3, // Temperatura um pouco mais alta para explicações mais naturais
         maxOutputTokens: 4096,
       }
     });
     
-    console.log('\n🤖 ENVIANDO PARA GEMINI FLASH (UNDERSTAND)...');
+    console.log('\n🤖 ENVIANDO PARA GEMINI-1.5-FLASH (UNDERSTAND)...');
     
     // Gerar resposta
     const result = await model.generateContent(fullPrompt);
@@ -410,7 +515,7 @@ app.post('/api/understand-function', async (req, res) => {
     const explanation = response.text();
     
     // LOG: Resposta recebida da LLM
-    console.log('\n📥 EXPLICAÇÃO RECEBIDA DO GEMINI FLASH:');
+    console.log('\n📥 EXPLICAÇÃO RECEBIDA DO GEMINI-1.5-FLASH:');
     console.log('-'.repeat(80));
     console.log(explanation);
     console.log('-'.repeat(80));
@@ -516,7 +621,7 @@ ${formattedSchema}`;
 
     // Configurar Gemini para tabelas
     const model = customGenAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash-exp",
+      model: "gemini-1.5-flash",
       systemInstruction: TABLE_SYSTEM_PROMPT
     });
 
@@ -595,32 +700,274 @@ COLUNAS:`;
   return formattedSchema;
 }
 
+// 🚀 NOVO ENDPOINT: Chat geral com contexto completo
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { 
+      messages, 
+      estimatedTokens,
+      conversation_context, 
+      prompt_type = 'general',
+      options = {},
+      geminiApiKey 
+    } = req.body;
+
+    console.log('\n' + '='.repeat(80));
+    console.log('💬 NOVA REQUISIÇÃO PARA CHAT GERAL (OpenRouter)');
+    console.log('='.repeat(80));
+    console.log('📊 DADOS RECEBIDOS:');
+    console.log('- Agente:', conversation_context?.agent_name || 'Desconhecido');
+    console.log('- Conversa ID:', conversation_context?.conversation_id || 'N/A');
+    console.log('- Mensagens total:', messages?.length || 0);
+    console.log('- Tokens estimados:', estimatedTokens || 'N/A');
+    console.log('- Modelo:', options.model || 'gemini-1.5-flash');
+    console.log('- Temperatura:', options.temperature || 0.7);
+    console.log('- Tipo do prompt:', prompt_type);
+
+    // Validar entrada
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      console.log('❌ ERRO: messages não fornecido ou vazio');
+      return res.status(400).json({
+        success: false,
+        error: 'messages deve ser um array não vazio'
+      });
+    }
+
+    // Converter formato específico para formato OpenAI/OpenRouter
+    const openRouterMessages = [];
+    
+    messages.forEach(msg => {
+      if (msg.startsWith('System:')) {
+        openRouterMessages.push({
+          role: 'system',
+          content: msg.replace('System:', '').trim()
+        });
+      } else if (msg.startsWith('Human:')) {
+        openRouterMessages.push({
+          role: 'user',
+          content: msg.replace('Human:', '').trim()
+        });
+      } else if (msg.startsWith('AI:')) {
+        openRouterMessages.push({
+          role: 'assistant',
+          content: msg.replace('AI:', '').trim()
+        });
+      }
+    });
+
+    console.log('📝 Mensagens convertidas para OpenRouter:');
+    openRouterMessages.forEach((msg, idx) => {
+      console.log(`${idx + 1}. [${msg.role}]: ${msg.content.substring(0, 100)}...`);
+    });
+
+    // Chamar OpenRouter
+    const result = await callOpenRouter(
+      openRouterMessages,
+      options.model || 'gemini-1.5-flash',
+      {
+        temperature: options.temperature || 0.7,
+        maxTokens: 4096
+      }
+    );
+
+    const responseText = result.text();
+
+    console.log('✅ Resposta recebida do OpenRouter:');
+    console.log('-'.repeat(40));
+    console.log(responseText);
+    console.log('-'.repeat(40));
+
+    res.json({
+      success: true,
+      response: responseText.trim(),
+      context: {
+        agent_name: conversation_context?.agent_name,
+        conversation_id: conversation_context?.conversation_id,
+        messages_processed: messages.length,
+        model_used: options.model || 'gemini-1.5-flash',
+        tokens_estimated: estimatedTokens,
+        tokens_used: result.response.usageMetadata
+      }
+    });
+
+  } catch (error) {
+    console.log('\n❌ ERRO NO CHAT GERAL (OpenRouter):');
+    console.log('-'.repeat(80));
+    console.error('Detalhes do erro:', error);
+    console.log('-'.repeat(80));
+    
+    // Tratar diferentes tipos de erro
+    if (error.message.includes('API key') || error.message.includes('401')) {
+      return res.status(401).json({
+        success: false,
+        error: 'Chave da API do OpenRouter inválida ou não configurada'
+      });
+    }
+    
+    if (error.message.includes('quota') || error.message.includes('429')) {
+      return res.status(429).json({
+        success: false,
+        error: 'Quota da API excedida. Tente novamente mais tarde.'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: 'Erro interno do servidor (OpenRouter)',
+      details: error.message
+    });
+  }
+});
+
+// 🗄️ NOVO ENDPOINT: Chat SQL com contexto completo
+app.post('/api/chat-sql', async (req, res) => {
+  try {
+    const { 
+      messages, 
+      estimatedTokens,
+      conversation_context, 
+      prompt_type = 'sql',
+      options = {},
+      geminiApiKey 
+    } = req.body;
+
+    console.log('\n' + '='.repeat(80));
+    console.log('🗄️ NOVA REQUISIÇÃO PARA CHAT SQL (OpenRouter)');
+    console.log('='.repeat(80));
+    console.log('📊 DADOS RECEBIDOS:');
+    console.log('- Agente:', conversation_context?.agent_name || 'Desconhecido');
+    console.log('- Conversa ID:', conversation_context?.conversation_id || 'N/A');
+    console.log('- Mensagens total:', messages?.length || 0);
+    console.log('- Tokens estimados:', estimatedTokens || 'N/A');
+    console.log('- Modelo:', options.model || 'gemini-1.5-pro');
+    console.log('- Temperatura:', options.temperature || 0.1);
+    console.log('- Tipo do prompt:', prompt_type);
+
+    // Validar entrada
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      console.log('❌ ERRO: messages não fornecido ou vazio');
+      return res.status(400).json({
+        success: false,
+        error: 'messages deve ser um array não vazio'
+      });
+    }
+
+    // Converter formato específico para formato OpenAI/OpenRouter
+    const openRouterMessages = [];
+    
+    messages.forEach(msg => {
+      if (msg.startsWith('System:')) {
+        const systemContent = msg.replace('System:', '').trim();
+        openRouterMessages.push({
+          role: 'system',
+          content: `Você é um especialista em PostgreSQL/Supabase. ${systemContent}`
+        });
+      } else if (msg.startsWith('Human:')) {
+        openRouterMessages.push({
+          role: 'user',
+          content: msg.replace('Human:', '').trim()
+        });
+      } else if (msg.startsWith('AI:')) {
+        openRouterMessages.push({
+          role: 'assistant',
+          content: msg.replace('AI:', '').trim()
+        });
+      }
+    });
+
+    console.log('📝 Mensagens SQL convertidas para OpenRouter:');
+    openRouterMessages.forEach((msg, idx) => {
+      console.log(`${idx + 1}. [${msg.role}]: ${msg.content.substring(0, 100)}...`);
+    });
+
+    // Chamar OpenRouter com modelo mais poderoso para SQL
+    const result = await callOpenRouter(
+      openRouterMessages,
+      options.model || 'gemini-1.5-pro',
+      {
+        temperature: options.temperature || 0.1,
+        maxTokens: 8192
+      }
+    );
+
+    const responseText = result.text();
+
+    console.log('✅ Resposta SQL recebida do OpenRouter:');
+    console.log('-'.repeat(40));
+    console.log(responseText);
+    console.log('-'.repeat(40));
+
+    res.json({
+      success: true,
+      response: responseText.trim(),
+      sql: responseText.trim(), // Para compatibilidade com código legado
+      context: {
+        agent_name: conversation_context?.agent_name,
+        conversation_id: conversation_context?.conversation_id,
+        messages_processed: messages.length,
+        model_used: options.model || 'gemini-1.5-pro',
+        tokens_estimated: estimatedTokens,
+        tokens_used: result.response.usageMetadata
+      }
+    });
+
+  } catch (error) {
+    console.log('\n❌ ERRO NO CHAT SQL (OpenRouter):');
+    console.log('-'.repeat(80));
+    console.error('Detalhes do erro:', error);
+    console.log('-'.repeat(80));
+    
+    // Tratar diferentes tipos de erro
+    if (error.message.includes('API key') || error.message.includes('401')) {
+      return res.status(401).json({
+        success: false,
+        error: 'Chave da API do OpenRouter inválida ou não configurada'
+      });
+    }
+    
+    if (error.message.includes('quota') || error.message.includes('429')) {
+      return res.status(429).json({
+        success: false,
+        error: 'Quota da API excedida. Tente novamente mais tarde.'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: 'Erro interno do servidor (OpenRouter)',
+      details: error.message
+    });
+  }
+});
+
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log('\n' + '='.repeat(60));
-  console.log('🚀 RPCraft Backend Iniciado com Sucesso!');
+  console.log('🚀 RPCraft Backend Iniciado com OpenRouter!');
   console.log('='.repeat(60));
   console.log(`🌐 Servidor rodando na porta: ${PORT}`);
   console.log(`🔧 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`🤖 Gemini test: http://localhost:${PORT}/api/test-gemini`);
-  console.log(`📡 Generate SQL: POST http://localhost:${PORT}/api/generate-sql`);
-  console.log(`🧠 Understand Function: POST http://localhost:${PORT}/api/understand-function`);
+  console.log(`🤖 OpenRouter test: http://localhost:${PORT}/api/test-openrouter`);
+  console.log(`💬 Chat Geral: POST http://localhost:${PORT}/api/chat`);
+  console.log(`🗄️ Chat SQL: POST http://localhost:${PORT}/api/chat-sql`);
   
-  // Verificar se a API key está configurada
-  if (!process.env.GEMINI_API_KEY) {
-    console.log('\n⚠️  ATENÇÃO: GEMINI_API_KEY NÃO CONFIGURADA!');
-    console.log('   📝 Crie um arquivo .env com: GEMINI_API_KEY=sua_chave_aqui');
+  // Verificar se a API key do OpenRouter está configurada
+  if (!OPENROUTER_API_KEY) {
+    console.log('\n⚠️  ATENÇÃO: OPENROUTER_API_KEY NÃO CONFIGURADA!');
+    console.log('   📝 Configure no arquivo .env: OPENROUTER_API_KEY=sua_chave_aqui');
   } else {
-    console.log('\n✅ GEMINI_API_KEY configurada corretamente');
-    console.log('🔑 API Key:', process.env.GEMINI_API_KEY.substring(0, 10) + '...');
+    console.log('\n✅ OPENROUTER_API_KEY configurada corretamente');
+    console.log('🔑 API Key:', OPENROUTER_API_KEY.substring(0, 15) + '...');
   }
   
-  console.log('\n📋 LOGS DETALHADOS ATIVADOS:');
-  console.log('   - Todas as requisições serão logadas');
-  console.log('   - Prompt completo enviado para Gemini será exibido');
-  console.log('   - Resposta da LLM será mostrada no console');
-  console.log('   - Generate SQL: gemini-2.5-pro (máxima qualidade)');
-  console.log('   - Understand Function: gemini-2.5-flash (máxima velocidade)');
+  console.log('\n🌟 NOVO SISTEMA:');
+  console.log('   🔄 Usando OpenRouter como proxy para acessar Gemini');
+  console.log('   🚀 Modelos disponíveis:');
+  console.log('   - google/gemini-flash-1.5 (velocidade)');
+  console.log('   - google/gemini-pro-1.5 (qualidade)');
+  console.log('   - google/gemini-2.0-flash-exp (experimental)');
+  console.log('   📊 Mesma compatibilidade com endpoints existentes');
+  console.log('   🔧 Logs detalhados ativados');
   console.log('='.repeat(60));
   console.log('🎧 Aguardando requisições...\n');
 }); 
