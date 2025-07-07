@@ -34,7 +34,7 @@ export interface FunctionParameter {
 export interface SupabaseConnection {
   url: string;
   serviceRoleKey: string;
-  geminiApiKey?: string;
+  geminiApiKey?: string; // Opcional, será removido gradualmente
 }
 
 export interface DatabaseStructure {

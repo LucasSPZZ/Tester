@@ -17,7 +17,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 }) => {
   const [url, setUrl] = useState('');
   const [serviceKey, setServiceKey] = useState('');
-  const [geminiApiKey, setGeminiApiKey] = useState('');
   const [sqlCopied, setSqlCopied] = useState(false);
 
   const sqlCode = `CREATE OR REPLACE FUNCTION public.execute_sql(sql_query text)
@@ -59,8 +58,7 @@ $function$`;
     if (url && serviceKey) {
       onConnect({ 
         url: url.trim(), 
-        serviceRoleKey: serviceKey.trim(),
-        geminiApiKey: geminiApiKey.trim() || undefined
+        serviceRoleKey: serviceKey.trim()
       });
     }
   };
@@ -203,27 +201,19 @@ $function$`;
               </div>
             </div>
 
-            {/* Gemini API Key */}
-            <div>
-              <label htmlFor="geminiApiKey" className="block text-sm font-medium text-slate-300 mb-2">
-                Gemini AI API Key
-                <span className="text-slate-500 text-xs ml-2">(Opcional - para IA)</span>
-              </label>
-              <div className="relative">
-                <Sparkles className="absolute left-3 top-3 w-5 h-5 text-slate-500" />
-                <input
-                  id="geminiApiKey"
-                  type="password"
-                  value={geminiApiKey}
-                  onChange={(e) => setGeminiApiKey(e.target.value)}
-                  placeholder="AIzaSyC..."
-                  className="w-full pl-11 pr-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors"
-                  disabled={isConnecting}
-                />
+            {/* Informativo sobre IA */}
+            <div className="bg-green-900/20 border border-green-700/30 rounded-lg p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-green-600 rounded-lg">
+                  <Sparkles className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h4 className="text-green-200 font-medium">IA Integrada</h4>
+                  <p className="text-green-300 text-sm">
+                    Sistema de IA já configurado no servidor. Não precisa configurar nada!
+                  </p>
+                </div>
               </div>
-              <p className="mt-2 text-xs text-slate-400">
-                Se não informada, será usada a chave padrão do sistema (limitações podem se aplicar)
-              </p>
             </div>
 
             {/* Progress */}

@@ -10,16 +10,19 @@ cd backend
 npm install
 ```
 
-### 2. Configurar Variáveis de Ambiente
-Crie um arquivo `.env` na raiz do diretório backend:
+### 2. Configurar OpenRouter (NOVO)
+**Opção A: Automática (Recomendado)**
+```bash
+npm run setup
+```
 
-```env
-# Chave da API do Google Gemini
-# Obtenha sua chave em: https://aistudio.google.com/app/apikey
-GEMINI_API_KEY=your_gemini_api_key_here
+**Opção B: Manual**
+```bash
+# Verificar configuração atual
+npm run check
 
-# Porta do servidor (opcional, padrão: 3001)
-PORT=3001
+# Editar arquivo .env manualmente
+# OPENROUTER_API_KEY=sk-or-v1-sua-chave-aqui
 ```
 
 ### 3. Executar o Servidor
@@ -30,6 +33,14 @@ npm run dev
 # Produção
 npm start
 ```
+
+## 🔑 Como Obter Chave OpenRouter
+
+1. Acesse [OpenRouter](https://openrouter.ai/keys)
+2. Faça login/cadastro
+3. Clique em "Create Key"
+4. Copie a chave (formato: `sk-or-v1-...`)
+5. Use no arquivo `.env`
 
 ## 🔧 Endpoints
 

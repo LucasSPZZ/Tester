@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MessageCircle, Settings, Plus, Bot, User, Send, Archive, Edit2, Trash2, Save, X, Copy, Download, Upload, Eye, EyeOff, FileText, Clock, Search, RotateCcw, Check, Bookmark, BookmarkPlus, HelpCircle } from 'lucide-react';
+import { MessageCircle, Settings, Plus, Bot, User, Send, Archive, Edit2, Trash2, Save, X, Copy, Download, Upload, Eye, EyeOff, FileText, Clock, Search, Check, Bookmark, BookmarkPlus, HelpCircle } from 'lucide-react';
 import type { Conversation, SystemPrompt, Message, Checkpoint } from '../types/prompt';
 import { useLLMBackend } from '../hooks/useLLMBackend';
 
@@ -1176,29 +1176,167 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
     setEditingMessageContent(message.content);
   };
 
-  const saveMessageEdit = () => {
-    if (!editingMessageId || !activeConversation || !editingMessageContent.trim()) return;
+  const saveMessageEdit = async () => {
+    if (!editingMessageId || !activeConversation || !editingMessageContent.trim() || !activePrompt) return;
 
-    const currentMessages = getActiveConversationMessages();
-    const updatedMessages = currentMessages.map(msg =>
-      msg.id === editingMessageId
-        ? { ...msg, content: editingMessageContent.trim() }
-        : msg
-    );
+    console.log('✏️ [EDIT] Iniciando edição e reenvio automático da mensagem');
+    setIsLoading(true);
 
-    const updatedConversation = {
-      ...activeConversation,
-      messages: updatedMessages,
-      updatedAt: new Date().toISOString()
-    };
+    try {
+      // ETAPA 1: Encontrar a mensagem editada
+      const currentMessages = getActiveConversationMessages();
+      const editedMessageIndex = currentMessages.findIndex(msg => msg.id === editingMessageId);
+      
+      if (editedMessageIndex === -1) {
+        console.error('❌ [EDIT] Mensagem não encontrada');
+        return;
+      }
 
-    const updatedConversations = conversations.map(c =>
-      c.id === activeConversation.id ? updatedConversation : c
-    );
+      // ETAPA 2: Apagar todas as mensagens posteriores usando delete_checkpoint
+      const messagesToDelete = currentMessages.slice(editedMessageIndex + 1);
+      
+      console.log('🗑️ [EDIT] Apagando mensagens posteriores:', {
+        mensagemEditada: editedMessageIndex + 1,
+        totalMensagens: currentMessages.length,
+        mensagensParaApagar: messagesToDelete.length
+      });
 
-    onUpdateConversations(updatedConversations);
-    setEditingMessageId(null);
-    setEditingMessageContent('');
+      // Apagar mensagens uma por uma usando delete_checkpoint
+      for (const messageToDelete of messagesToDelete) {
+        try {
+          if (appState && appState.deleteMessage && isConnected) {
+            await appState.deleteMessage(messageToDelete.id);
+            console.log('🗑️ [EDIT] Mensagem apagada:', messageToDelete.id);
+          }
+        } catch (error) {
+          console.warn('⚠️ [EDIT] Erro ao apagar mensagem:', messageToDelete.id, error);
+        }
+      }
+
+      // ETAPA 3: Atualizar a mensagem editada
+      const editedMessage = currentMessages[editedMessageIndex];
+      const updatedMessage = {
+        ...editedMessage,
+        content: editingMessageContent.trim()
+      };
+
+      // Atualizar no banco se conectado
+      if (appState && appState.updateMessage && isConnected) {
+        await appState.updateMessage(editedMessage.id, editingMessageContent.trim());
+        console.log('✏️ [EDIT] Mensagem atualizada no banco:', editedMessage.id);
+      }
+
+      // ETAPA 4: Manter apenas mensagens até a editada (inclusive)
+      const finalMessages = currentMessages.slice(0, editedMessageIndex).concat([updatedMessage]);
+      
+      const updatedConversation = {
+        ...activeConversation,
+        messages: finalMessages,
+        updatedAt: new Date().toISOString()
+      };
+
+      const updatedConversations = conversations.map(c =>
+        c.id === activeConversation.id ? updatedConversation : c
+      );
+
+      onUpdateConversations(updatedConversations);
+
+      // ETAPA 5: Se a mensagem editada foi do usuário, fazer nova requisição para LLM
+      if (updatedMessage.role === 'user') {
+        console.log('🤖 [EDIT] Mensagem do usuário editada, fazendo nova requisição para LLM...');
+        
+        // Preparar contexto para LLM (histórico até antes da mensagem editada)
+        const historyBeforeEditedMessage = finalMessages.slice(0, -1);
+        
+        // Adicionar mensagem temporária de processamento
+        const tempAssistantMessage: Message = {
+          id: `temp-assistant-${Date.now()}`,
+          role: 'assistant',
+          content: `🤖 Reprocessando após edição...`,
+          timestamp: new Date().toISOString(),
+          conversationId: activeConversation.id,
+          isProcessing: true
+        };
+
+        setTempMessages([tempAssistantMessage]);
+
+        // Preparar contexto para LLM
+        const llmContext = {
+          systemPrompt: activePrompt,
+          messageHistory: historyBeforeEditedMessage,
+          newUserMessage: editingMessageContent.trim(),
+          conversationId: activeConversation.id,
+          agentPromptId: activePromptId,
+          model: currentModel
+        };
+
+        console.log('🔄 [EDIT] Enviando contexto atualizado para LLM:', {
+          systemPromptName: llmContext.systemPrompt.name,
+          model: currentModel,
+          historyCount: llmContext.messageHistory.length,
+          editedMessage: editingMessageContent.trim().substring(0, 50) + '...'
+        });
+
+        // Fazer requisição para LLM
+        const assistantResponse = await llmBackend.sendMessageWithContext(llmContext);
+        
+        console.log('✅ [EDIT] Nova resposta recebida da LLM:', assistantResponse.substring(0, 100) + '...');
+
+        // ETAPA 6: Salvar nova resposta do assistant
+        if (appState && appState.addMessage && isConnected) {
+          console.log('💾 [EDIT] Salvando nova resposta no Supabase...');
+          const assistantMessage = await appState.addMessage(activeConversation.id, assistantResponse, 'assistant');
+          
+          // Atualizar cache local
+          setConversationMessages(prev => {
+            const currentMessages = prev[activeConversation.id] || [];
+            return {
+              ...prev,
+              [activeConversation.id]: [...finalMessages, assistantMessage]
+            };
+          });
+          
+          console.log('✅ [EDIT] Nova resposta do assistant salva:', assistantMessage.id);
+        } else {
+          // Modo offline - adicionar resposta localmente
+          console.log('📱 [EDIT] Adicionando resposta local (modo offline)...');
+          const assistantMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: `📴 **Modo Offline**\n\n${assistantResponse}`,
+            timestamp: new Date().toISOString()
+          };
+
+          const finalUpdatedMessages = [...finalMessages, assistantMessage];
+          const finalUpdatedConversation = {
+            ...activeConversation,
+            messages: finalUpdatedMessages,
+            updatedAt: new Date().toISOString()
+          };
+
+          const finalUpdatedConversations = conversations.map(c => 
+            c.id === activeConversation.id ? finalUpdatedConversation : c
+          );
+          onUpdateConversations(finalUpdatedConversations);
+        }
+      }
+
+      // Limpar estado de edição
+      setEditingMessageId(null);
+      setEditingMessageContent('');
+      setTempMessages([]);
+      
+      console.log('✅ [EDIT] Edição e reenvio concluídos com sucesso');
+
+    } catch (error) {
+      console.error('❌ [EDIT] Erro durante edição e reenvio:', error);
+      // Em caso de erro, manter pelo menos a edição da mensagem
+      setEditingMessageId(null);
+      setEditingMessageContent('');
+      setTempMessages([]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const cancelMessageEdit = () => {
@@ -1376,7 +1514,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
               <label className="text-xs text-[#888888]">Prompt Ativo:</label>
               <button
                 onClick={() => openPromptEditor(activePrompt)}
-                className="text-xs text-[#8b5cf6] hover:text-[#7c3aed] transition-colors"
+                className="text-xs text-emerald-400 hover:text-emerald-300 transition-colors"
                 title="Editar prompt atual"
               >
                 <Edit2 className="w-3 h-3" />
@@ -1406,7 +1544,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                     <div
                       key={prompt.id}
                       className={`flex items-center justify-between p-2 hover:bg-[#2a2a2a] transition-colors border-b border-[#333] last:border-b-0 ${
-                        prompt.id === activePromptId ? 'bg-[#8b5cf6]/20' : ''
+                        prompt.id === activePromptId ? 'bg-emerald-400/20' : ''
                       }`}
                     >
                       <div 
@@ -1429,7 +1567,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                           setShowPromptsDropdown(false);
                           openPromptEditor(prompt);
                         }}
-                        className="ml-2 p-1 text-[#666666] hover:text-[#8b5cf6] transition-colors flex-shrink-0"
+                        className="ml-2 p-1 text-[#666666] hover:text-emerald-400 transition-colors flex-shrink-0"
                         title="Editar prompt"
                       >
                         <Edit2 className="w-3 h-3" />
@@ -1444,7 +1582,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                         setShowPromptsDropdown(false);
                         openPromptEditor();
                       }}
-                      className="w-full flex items-center gap-2 p-2 text-[#8b5cf6] hover:bg-[#8b5cf6]/10 rounded transition-colors text-sm"
+                      className="w-full flex items-center gap-2 p-2 text-emerald-400 hover:bg-emerald-400/10 rounded transition-colors text-sm"
                     >
                       <Plus className="w-3 h-3" />
                       Criar novo prompt
@@ -1492,7 +1630,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
           {/* Botão Nova Conversa */}
           <button
             onClick={createNewConversation}
-            className="w-full flex items-center gap-2 px-3 py-2 bg-[#8b5cf6] hover:bg-[#7c3aed] text-white rounded-md transition-colors text-sm"
+                            className="w-full flex items-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md transition-colors text-sm"
           >
             <Plus className="w-4 h-4" />
             Nova Conversa
@@ -1522,7 +1660,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                 key={conversation.id}
                 className={`group p-3 rounded-md cursor-pointer transition-colors mb-2 relative ${
                   activeConversationId === conversation.id
-                    ? 'bg-[#8b5cf6] text-white'
+                    ? 'bg-emerald-600 text-white'
                     : 'bg-[#0a0a0a] text-[#888888] hover:bg-[#2a2a2a] hover:text-white'
                 } ${conversation.isArchived ? 'opacity-60' : ''}`}
                 onClick={() => onSetActiveConversation(conversation.id)}
@@ -1692,7 +1830,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                                    cancelModelEdit();
                                  }
                                }}
-                               className="bg-[#0a0a0a] border border-[#8b5cf6] rounded px-2 py-1 text-white text-xs w-48 focus:outline-none"
+                               className="bg-[#0a0a0a] border border-emerald-400 rounded px-2 py-1 text-white text-xs w-48 focus:outline-none"
                                placeholder="ex: anthropic/claude-3.5-sonnet"
                                autoFocus
                              />
@@ -1714,7 +1852,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                          ) : (
                            <button
                              onClick={() => setIsEditingModel(true)}
-                             className="text-[#8b5cf6] hover:text-[#7c3aed] transition-colors flex items-center gap-1"
+                             className="text-emerald-400 hover:text-emerald-300 transition-colors flex items-center gap-1"
                              title="Clique para alterar modelo"
                            >
                              <span className="font-mono text-xs">{currentModel}</span>
@@ -1736,70 +1874,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleCheckpointsClick}
-                      className={`px-3 py-1 text-xs rounded transition-colors flex items-center gap-1 ${
-                        activeCheckpoint 
-                          ? 'bg-blue-600/20 text-blue-400 border border-blue-600/30' 
-                          : 'bg-[#2a2a2a] hover:bg-[#3a3a3a] text-white'
-                      }`}
-                      title={activeCheckpoint ? `Gerenciar Checkpoints (Filtro: ${activeCheckpoint.name})` : "Gerenciar Checkpoints"}
-                    >
-                      <Bookmark className="w-3 h-3" />
-                      {modalCheckpoints.length > 0 && (
-                        <span className="bg-[#8b5cf6] text-white text-xs px-1 rounded">
-                          {modalCheckpoints.length}
-                        </span>
-                      )}
-                    </button>
-                    
-                    {getActiveConversationMessages().length > 0 && (
-                      <button
-                        onClick={async () => {
-                          const quickName = `Checkpoint ${modalCheckpoints.length + 1}`;
-                          await createQuickCheckpoint();
-                        }}
-                        className="px-3 py-1 text-xs bg-[#8b5cf6] hover:bg-[#7c3aed] text-white rounded transition-colors flex items-center gap-1"
-                        title="Criar checkpoint rápido do estado atual"
-                      >
-                        <BookmarkPlus className="w-3 h-3" />
-                        Checkpoint Rápido
-                      </button>
-                    )}
-                    
-                    {/* ✨ NOVO: Área de controle avançado quando há checkpoint ativo */}
-                    {activeCheckpoint && (
-                      <div className="flex items-center gap-3 ml-3 pl-3 border-l border-[#3a3a3a]">
-                        <div className="flex items-center gap-2 px-2 py-1 bg-blue-600/10 border border-blue-600/30 rounded">
-                          <Bookmark className="w-3 h-3 text-blue-400" />
-                          <span className="text-xs text-blue-400 font-medium">{activeCheckpoint.name}</span>
-                          <span className="text-xs text-[#666666]">({getAllConversationMessages().length - getActiveConversationMessages().length} ocultas)</span>
-                        </div>
-                        
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={clearCheckpointFilter}
-                            className="px-2 py-1 text-xs bg-orange-600/20 text-orange-400 border border-orange-600/30 rounded transition-colors hover:bg-orange-600/30 flex items-center gap-1"
-                            title="Remover filtro e mostrar todas as mensagens da conversa"
-                          >
-                            <Eye className="w-3 h-3" />
-                            <span className="hidden sm:inline">Ver Todas</span>
-                          </button>
-                          
-                          <button
-                            onClick={() => {
-                              setNewConversationName(`${activeConversation.name} - ${activeCheckpoint.name}`);
-                              setShowCreateConversationModal(true);
-                            }}
-                            className="px-2 py-1 text-xs bg-green-600/20 text-green-400 border border-green-600/30 rounded transition-colors hover:bg-green-600/30 flex items-center gap-1"
-                            title="Salvar como nova conversa • Preserva estado atual do checkpoint"
-                          >
-                            <Plus className="w-3 h-3" />
-                            <span className="hidden sm:inline">Salvar Como</span>
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                    {/* Simplificado: Apenas botão básico de checkpoints */}
                   </div>
                 </div>
             </div>
@@ -1828,7 +1903,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                       <div
                         className={`max-w-[70%] p-4 rounded-lg relative ${
                           message.role === 'user'
-                            ? 'bg-[#8b5cf6] text-white'
+                            ? 'bg-emerald-600 text-white'
                             : 'bg-[#1a1a1a] text-white border border-[#2a2a2a]'
                         }`}
                       >
@@ -1838,58 +1913,18 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                           ) : (
                             <Bot className="w-4 h-4" />
                           )}
-                          <span className="text-xs opacity-70">
-                            {new Date(message.timestamp).toLocaleTimeString('pt-BR')}
+                          <span className="text-xs opacity-70 font-medium">
+                            {message.role === 'user' ? 'User' : 'Assistant'}
                           </span>
                           
                                                     {/* Botões de ação */}
                           <div className="ml-auto opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-opacity">
                             <button
-                              onClick={() => navigator.clipboard.writeText(message.content)}
-                              className="p-1 hover:bg-black/20 rounded transition-all"
-                              title="Copiar mensagem"
-                            >
-                              <Copy className="w-3 h-3" />
-                            </button>
-                            
-                            <button
                               onClick={() => startEditingMessage(message)}
-                              className="p-1 hover:bg-black/20 rounded transition-all"
+                              className="p-1 hover:bg-black/20 rounded transition-all text-emerald-400"
                               title="Editar mensagem"
                             >
                               <Edit2 className="w-3 h-3" />
-                            </button>
-                            
-                            <button
-                              onClick={() => {
-                                showConfirm({
-                                  title: 'Criar Checkpoint',
-                                  message: `Criar checkpoint até esta mensagem? Isso permitirá voltar a este ponto específico da conversa.`,
-                                  confirmText: 'Criar Checkpoint',
-                                  onConfirm: () => createCheckpointAtMessage(message.id),
-                                  danger: false
-                                });
-                              }}
-                              className="p-1 hover:bg-black/20 rounded transition-all text-blue-400"
-                              title="Criar checkpoint até aqui"
-                            >
-                              <Bookmark className="w-3 h-3" />
-                            </button>
-                            
-                            <button
-                              onClick={() => {
-                              showConfirm({
-                                title: 'Voltar para este ponto',
-                                message: 'Deseja voltar para este ponto da conversa? Todas as mensagens posteriores serão removidas.',
-                                confirmText: 'Voltar',
-                                onConfirm: () => truncateConversationToMessage(message.id),
-                                danger: true
-                              });
-                            }}
-                              className="p-1 hover:bg-black/20 rounded transition-all"
-                              title="Voltar para este ponto"
-                            >
-                              <RotateCcw className="w-3 h-3" />
                             </button>
                             
                             <button
@@ -1912,12 +1947,13 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                         
                         {/* Conteúdo da mensagem */}
                         {editingMessageId === message.id ? (
-                          <div className="space-y-3">
+                          <div className="relative">
+                            <div className="absolute inset-0 border-2 border-emerald-500 rounded pointer-events-none"></div>
                             <textarea
                               value={editingMessageContent}
                               onChange={(e) => setEditingMessageContent(e.target.value)}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter' && e.ctrlKey) {
+                                if (e.key === 'Enter' && !e.shiftKey) {
                                   e.preventDefault();
                                   saveMessageEdit();
                                 }
@@ -1926,44 +1962,42 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                                   cancelMessageEdit();
                                 }
                               }}
-                              className="w-full bg-black/20 border border-white/20 rounded px-3 py-2 text-white text-sm resize-none"
-                              rows={3}
-                              placeholder="Edite a mensagem..."
+                              className="w-full bg-transparent text-white text-sm resize-none focus:outline-none"
+                              style={{
+                                height: 'auto',
+                                minHeight: 'inherit',
+                                padding: 0,
+                                border: 'none',
+                                lineHeight: 'inherit'
+                              }}
+                              placeholder="Editando..."
                               autoFocus
+                              disabled={isLoading}
                             />
-                            <div className="flex items-center justify-between">
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={saveMessageEdit}
-                                  className="flex items-center gap-1 px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs transition-colors"
-                                >
-                                  <Check className="w-3 h-3" />
-                                  Salvar
-                                </button>
-                                <button
-                                  onClick={cancelMessageEdit}
-                                  className="flex items-center gap-1 px-2 py-1 bg-gray-600 hover:bg-gray-700 text-white rounded text-xs transition-colors"
-                                >
-                                  <X className="w-3 h-3" />
-                                  Cancelar
-                                </button>
+                            {isLoading && (
+                              <div className="absolute inset-0 bg-black/70 flex items-center justify-center rounded">
+                                <div className="flex items-center gap-2 text-emerald-400">
+                                  <div className="w-4 h-4 border-2 border-emerald-400/30 border-t-emerald-400 rounded-full animate-spin" />
+                                  <span className="text-sm">Processando...</span>
+                                </div>
                               </div>
-                              <div className="text-xs opacity-60">
-                                Ctrl+Enter para salvar • ESC para cancelar
-                              </div>
-                            </div>
+                            )}
                           </div>
                         ) : (
-                          <div className="text-sm whitespace-pre-wrap">
+                          <div 
+                            className="text-sm whitespace-pre-wrap cursor-pointer hover:bg-white/5 rounded transition-colors"
+                            onClick={() => startEditingMessage(message)}
+                            title="Clique para editar esta mensagem"
+                          >
                             {/* ✨ NOVO: Renderização especial para mensagens de processamento */}
                             {message.isProcessing ? (
                               <div className="flex items-center gap-2">
                                 <div className="flex space-x-1">
-                                  <div className="w-2 h-2 bg-[#8b5cf6] rounded-full animate-bounce"></div>
-                                  <div className="w-2 h-2 bg-[#8b5cf6] rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                                  <div className="w-2 h-2 bg-[#8b5cf6] rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                                  <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce"></div>
+                                  <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                                  <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
                                 </div>
-                                <span className="text-[#8b5cf6]">{message.content}</span>
+                                <span className="text-emerald-400">{message.content}</span>
                               </div>
                             ) : (
                               message.content
@@ -1971,10 +2005,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                           </div>
                         )}
                         
-                        {/* Indicador de posição na conversa */}
-                        <div className="absolute -bottom-2 left-2 text-xs text-gray-500 bg-[#0a0a0a] px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                          #{index + 1}
-                        </div>
+
                       </div>
                     </div>
                   ))}
@@ -2008,14 +2039,12 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                       className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded-md px-4 py-3 text-white placeholder-[#888888] resize-none min-h-[80px] max-h-[200px]"
                       disabled={isLoading}
                     />
-                    <div className="absolute bottom-2 right-2 text-xs text-[#666666]">
-                      {newMessage.length} chars
-                    </div>
+
                   </div>
                   <button
                     onClick={sendMessage}
                     disabled={!newMessage.trim() || isLoading}
-                    className="px-6 py-3 bg-[#8b5cf6] hover:bg-[#7c3aed] disabled:bg-[#2a2a2a] disabled:text-[#888888] text-white rounded-md transition-colors self-end min-w-[80px] flex items-center justify-center gap-2"
+                    className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-[#2a2a2a] disabled:text-[#888888] text-white rounded-md transition-colors self-end min-w-[80px] flex items-center justify-center gap-2"
                   >
                     {isLoading ? (
                       <>
@@ -2031,55 +2060,14 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                   <p className="text-xs text-[#888888]">
                     {isLoading ? (
                       <span className="flex items-center gap-2">
-                        <div className="w-3 h-3 border border-[#8b5cf6]/30 border-t-[#8b5cf6] rounded-full animate-spin" />
-                        🤖 Mensagem enviada • IA processando com {currentModel}...
+                        <div className="w-3 h-3 border border-emerald-400/30 border-t-emerald-400 rounded-full animate-spin" />
+                        Processando...
                       </span>
                     ) : (
-                      'Pressione Enter para enviar, Shift+Enter para nova linha'
+                      'Pressione Enter para enviar'
                     )}
                   </p>
-                  <p className="text-xs text-[#666666] flex items-center gap-3">
-                    {isLoading ? (
-                      <span className="text-[#8b5cf6]">
-                        ⚡ Processando com {currentModel} • {getActiveConversationMessages().length} mensagens
-                        {activeCheckpoint && (
-                          <span className="text-blue-400 ml-1">
-                            (filtro: {activeCheckpoint.name})
-                          </span>
-                        )}
-                      </span>
-                    ) : (
-                      <>
-                        {activeCheckpoint ? (
-                          <span className="text-blue-400">
-                            🎯 Checkpoint "{activeCheckpoint.name}" ativo • Contexto: {getActiveConversationMessages().length} mensagens • {getAllConversationMessages().length - getActiveConversationMessages().length} ocultas
-                          </span>
-                        ) : (
-                          '💡 Passe o mouse sobre mensagens para criar checkpoints • Use "?" no header para ajuda'
-                        )}
-                      </>
-                    )}
-                    <span className="flex items-center gap-1">
-                      {backendStatus === 'checking' && (
-                        <>
-                          <div className="w-2 h-2 border border-yellow-500/30 border-t-yellow-500 rounded-full animate-spin" />
-                          <span className="text-yellow-500">Verificando IA...</span>
-                        </>
-                      )}
-                      {backendStatus === 'online' && (
-                        <>
-                          <div className="w-2 h-2 bg-green-500 rounded-full" />
-                          <span className="text-green-500">IA Online</span>
-                        </>
-                      )}
-                      {backendStatus === 'offline' && (
-                        <>
-                          <div className="w-2 h-2 bg-red-500 rounded-full" />
-                          <span className="text-red-500">IA Offline</span>
-                        </>
-                      )}
-                    </span>
-                  </p>
+
                 </div>
               </div>
             </div>
@@ -2099,7 +2087,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
               <div className="space-y-3">
                 <button
                   onClick={createNewConversation}
-                  className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 bg-[#8b5cf6] hover:bg-[#7c3aed] text-white rounded-md transition-colors"
+                  className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md transition-colors"
                 >
                   <Plus className="w-4 h-4" />
                   Criar Nova Conversa
@@ -2224,7 +2212,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                {/* Fluxo de Teste */}
                <div>
                  <h3 className="text-lg font-medium text-white mb-3 flex items-center gap-2">
-                   <RotateCcw className="w-5 h-5 text-purple-400" />
+                   <HelpCircle className="w-5 h-5 text-emerald-400" />
                    Fluxo de Teste Recomendado
                  </h3>
                  <div className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg p-4">
@@ -2248,7 +2236,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                  </p>
                  <button
                    onClick={() => setShowHelpModal(false)}
-                   className="px-4 py-2 text-sm text-white bg-[#8b5cf6] hover:bg-[#7c3aed] rounded-md transition-colors"
+                   className="px-4 py-2 text-sm text-white bg-emerald-600 hover:bg-emerald-700 rounded-md transition-colors"
                  >
                    Entendi
                  </button>
@@ -2322,7 +2310,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                                            <button
                         onClick={async () => await createCheckpoint()}
                         disabled={!checkpointName.trim() || !getActiveConversationMessages().length}
-                        className="px-4 py-2 bg-[#8b5cf6] hover:bg-[#7c3aed] disabled:bg-[#2a2a2a] disabled:text-[#888888] text-white rounded-md text-sm transition-colors flex items-center gap-2"
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-[#2a2a2a] disabled:text-[#888888] text-white rounded-md text-sm transition-colors flex items-center gap-2"
                       >
                        <BookmarkPlus className="w-4 h-4" />
                        Criar Checkpoint
@@ -2380,7 +2368,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                                    {checkpoint.name}
                                  </h4>
                                )}
-                               <span className="text-xs bg-[#8b5cf6] text-white px-2 py-1 rounded">
+                               <span className="text-xs bg-emerald-600 text-white px-2 py-1 rounded">
                                  #{index + 1}
                                </span>
                                {/* ✨ NOVO: Indicador de checkpoint ativo */}
@@ -2456,10 +2444,10 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                                          danger: false
                                        });
                                      }}
-                                     className="px-3 py-2 bg-[#8b5cf6] hover:bg-[#7c3aed] text-white rounded-md text-sm transition-colors flex items-center gap-2"
+                                                                           className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-sm transition-colors flex items-center gap-2"
                                      title="Aplicar filtro do checkpoint"
                                    >
-                                     <RotateCcw className="w-4 h-4" />
+                                     <Eye className="w-4 h-4" />
                                      Aplicar
                                    </button>
                                  )}
@@ -2580,7 +2568,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                  className={`px-4 py-2 text-sm text-white rounded-md transition-colors ${
                    confirmConfig.danger
                      ? 'bg-red-600 hover:bg-red-700'
-                     : 'bg-[#8b5cf6] hover:bg-[#7c3aed]'
+                     : 'bg-emerald-600 hover:bg-emerald-700'
                  }`}
                >
                  {confirmConfig.confirmText}
@@ -2687,7 +2675,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                    }
                  }}
                  disabled={!newConversationName.trim()}
-                 className="px-4 py-2 text-sm text-white bg-[#8b5cf6] hover:bg-[#7c3aed] disabled:bg-[#2a2a2a] disabled:text-[#888888] rounded-md transition-colors"
+                 className="px-4 py-2 text-sm text-white bg-emerald-600 hover:bg-emerald-700 disabled:bg-[#2a2a2a] disabled:text-[#888888] rounded-md transition-colors"
                >
                  Criar Conversa
                </button>
@@ -2722,7 +2710,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                     <h3 className="text-lg font-medium text-white">Prompts Existentes</h3>
                     <button
                       onClick={() => openPromptEditor()}
-                      className="flex items-center gap-2 px-4 py-2 bg-[#8b5cf6] hover:bg-[#7c3aed] text-white rounded-md transition-colors"
+                      className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md transition-colors"
                     >
                       <Plus className="w-4 h-4" />
                       Novo Prompt
@@ -2735,7 +2723,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                         key={prompt.id}
                         className={`p-4 rounded-lg border transition-colors ${
                           prompt.id === activePromptId
-                            ? 'border-[#8b5cf6] bg-[#8b5cf6]/10'
+                            ? 'border-emerald-400 bg-emerald-400/10'
                             : 'border-[#2a2a2a] bg-[#0a0a0a] hover:border-[#3a3a3a]'
                         }`}
                       >
@@ -2866,7 +2854,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                 <button
                   onClick={savePrompt}
                   disabled={!promptName.trim() || !promptContent.trim()}
-                  className="px-6 py-2 bg-[#8b5cf6] hover:bg-[#7c3aed] disabled:bg-[#2a2a2a] disabled:text-[#888888] text-white rounded-md transition-colors"
+                  className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-[#2a2a2a] disabled:text-[#888888] text-white rounded-md transition-colors"
                 >
                   {isCreatingNewPrompt ? 'Criar Prompt' : 'Salvar Alterações'}
                 </button>

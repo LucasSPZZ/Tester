@@ -11,8 +11,37 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // 🔧 CONFIGURAÇÃO OPENROUTER
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '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';
+console.log('\n🔍 [DEBUG] Verificando configuração do ambiente...');
+console.log('📁 Diretório atual:', process.cwd());
+console.log('📄 Arquivo .env carregado:', require('fs').existsSync('.env') ? '✅ Existe' : '❌ Não encontrado');
+
+// Debug das variáveis de ambiente
+console.log('🔑 [DEBUG] Variáveis de ambiente carregadas:');
+console.log('  - PORT:', process.env.PORT || 'undefined');
+console.log('  - OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY ? 
+  `✅ Configurada (${process.env.OPENROUTER_API_KEY.substring(0, 15)}...)` : 
+  '❌ Não encontrada');
+
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+
+// ⚠️ VALIDAÇÃO: Verificar se a chave está configurada
+if (!OPENROUTER_API_KEY || OPENROUTER_API_KEY === 'COLOQUE_SUA_CHAVE_AQUI') {
+  console.error('\n❌ ERRO CRÍTICO: OPENROUTER_API_KEY não configurada adequadamente!');
+  console.error('📝 Verifique o arquivo .env na pasta backend');
+  console.error('🔧 Conteúdo esperado:');
+  console.error('   PORT=3001');
+  console.error('   OPENROUTER_API_KEY=sk-or-v1-sua-chave-real-aqui');
+  console.error('🔑 Obtenha sua chave em: https://openrouter.ai/keys');
+  console.error('🚨 Substitua "COLOQUE_SUA_CHAVE_AQUI" pela chave real!\n');
+  
+  if (require('fs').existsSync('.env')) {
+    console.error('📄 Conteúdo atual do .env:');
+    console.error(require('fs').readFileSync('.env', 'utf8'));
+  }
+  
+  process.exit(1);
+}
 
 // Mapeamento de modelos Gemini para OpenRouter
 const MODEL_MAPPING = {
@@ -39,14 +68,30 @@ async function callOpenRouter(messages, model = 'google/gemini-flash-1.5', optio
     temperature: payload.temperature
   });
 
+  // 🔍 DEBUG: Verificar chave antes de enviar
+  console.log('🔑 [DEBUG] Chave sendo enviada:', {
+    exists: !!OPENROUTER_API_KEY,
+    length: OPENROUTER_API_KEY ? OPENROUTER_API_KEY.length : 0,
+    prefix: OPENROUTER_API_KEY ? OPENROUTER_API_KEY.substring(0, 15) + '...' : 'undefined',
+    format: OPENROUTER_API_KEY ? (OPENROUTER_API_KEY.startsWith('sk-or-v1-') ? 'CORRETO' : 'FORMATO INVÁLIDO') : 'AUSENTE'
+  });
+
+  // 🔧 CORREÇÃO: Usar new Headers() para garantir que Authorization seja enviado
+  const headers = new Headers();
+  headers.set('Authorization', `Bearer ${OPENROUTER_API_KEY}`);
+  headers.set('Content-Type', 'application/json');
+  headers.set('HTTP-Referer', 'http://localhost:3001');
+  headers.set('X-Title', 'RPCraft Backend');
+
+  console.log('📋 [DEBUG] Headers sendo enviados:', {
+    hasAuth: headers.has('Authorization'),
+    authFormat: headers.get('Authorization') ? headers.get('Authorization').substring(0, 25) + '...' : 'undefined',
+    allHeaders: Array.from(headers.entries())
+  });
+
   const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'http://localhost:3001',
-      'X-Title': 'RPCraft Backend'
-    },
+    headers: headers,
     body: JSON.stringify(payload)
   });
 
