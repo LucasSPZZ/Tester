@@ -207,7 +207,7 @@ $function$`;
                 <div className="p-2 bg-green-600 rounded-lg">
                   <Sparkles className="w-5 h-5 text-white" />
                 </div>
-                <div>
+            <div>
                   <h4 className="text-green-200 font-medium">IA Integrada</h4>
                   <p className="text-green-300 text-sm">
                     Sistema de IA já configurado no servidor. Não precisa configurar nada!

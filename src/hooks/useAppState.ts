@@ -209,15 +209,30 @@ export const useAppState = () => {
   const deleteConversation = useCallback(async (conversationId: string) => {
     try {
       if (appState.isConnected) {
+        console.log('🗑️ Deletando conversa:', conversationId);
+        
+        // Deletar no servidor
         await supabaseClient.deleteConversation(conversationId);
+        
+        console.log('✅ Conversa deletada no servidor');
+        
+        // Forçar recarregamento das conversas para garantir sincronização
+        const conversations = await supabaseClient.getAllConversations(appState.activePromptId);
+        updateAppState({
+          conversations: conversations.map(conv => ({ ...conv, messages: [] })),
+          activeConversationId: appState.activeConversationId === conversationId ? null : appState.activeConversationId,
+        });
+        
+        console.log('✅ Lista de conversas recarregada:', conversations.length);
+      } else {
+        // Modo offline - atualizar estado local
+        updateAppState({
+          conversations: appState.conversations.filter(conv => conv.id !== conversationId),
+          activeConversationId: appState.activeConversationId === conversationId ? null : appState.activeConversationId,
+        });
       }
 
-      updateAppState({
-        conversations: appState.conversations.filter(conv => conv.id !== conversationId),
-        activeConversationId: appState.activeConversationId === conversationId ? null : appState.activeConversationId,
-      });
-
-      // Limpar cache
+      // Limpar cache independentemente do modo
       setMessagesCache(prev => {
         const newCache = { ...prev };
         delete newCache[conversationId];
@@ -229,11 +244,27 @@ export const useAppState = () => {
         delete newCache[conversationId];
         return newCache;
       });
+      
     } catch (error) {
-      console.error('Erro ao deletar conversa:', error);
+      console.error('❌ Erro ao deletar conversa:', error);
+      
+      // Em caso de erro, tentar recarregar as conversas mesmo assim
+      // para garantir que o estado fique sincronizado
+      if (appState.isConnected) {
+        try {
+          const conversations = await supabaseClient.getAllConversations(appState.activePromptId);
+          updateAppState({
+            conversations: conversations.map(conv => ({ ...conv, messages: [] })),
+          });
+          console.log('🔄 Estado recarregado após erro');
+        } catch (reloadError) {
+          console.error('❌ Erro ao recarregar após falha:', reloadError);
+        }
+      }
+      
       throw error;
     }
-  }, [appState.isConnected, appState.conversations, appState.activeConversationId]);
+  }, [appState.isConnected, appState.conversations, appState.activeConversationId, appState.activePromptId, supabaseClient]);
 
   // === OPERAÇÕES DE MENSAGENS ===
   const getMessagesForConversation = useCallback(async (conversationId: string): Promise<Message[]> => {
@@ -315,6 +346,107 @@ export const useAppState = () => {
       throw error;
     }
   }, [appState.isConnected, appState.conversations]);
+
+  const updateMessage = useCallback(async (messageId: string, content: string) => {
+    try {
+      let updatedMessage: Message;
+
+      if (appState.isConnected) {
+        updatedMessage = await supabaseClient.updateMessageContent(messageId, content);
+      } else {
+        // Modo offline - encontrar e atualizar a mensagem local
+        updatedMessage = {
+          id: messageId,
+          role: 'user', // assumindo que é mensagem do usuário
+          content,
+          timestamp: new Date().toISOString(),
+        };
+        
+        // Atualizar no estado das conversas
+        updateAppState({
+          conversations: appState.conversations.map(conv => ({
+            ...conv,
+            messages: conv.messages.map(msg => 
+              msg.id === messageId ? { ...msg, content } : msg
+            )
+          }))
+        });
+      }
+
+      // Atualizar cache de mensagens
+      setMessagesCache(prev => {
+        const newCache = { ...prev };
+        for (const conversationId in newCache) {
+          newCache[conversationId] = newCache[conversationId].map(msg =>
+            msg.id === messageId ? { ...msg, content } : msg
+          );
+        }
+        return newCache;
+      });
+
+      return updatedMessage;
+    } catch (error) {
+      console.error('Erro ao atualizar mensagem:', error);
+      throw error;
+    }
+  }, [appState.isConnected, appState.conversations]);
+
+  const deleteMessage = useCallback(async (messageId: string, conversationId: string) => {
+    try {
+      if (appState.isConnected) {
+        await supabaseClient.deleteMessagesByConversation(messageId);
+      }
+
+      // Atualizar cache de mensagens - remover a mensagem deletada
+      setMessagesCache(prev => ({
+        ...prev,
+        [conversationId]: (prev[conversationId] || []).filter(msg => msg.id !== messageId)
+      }));
+
+      console.log('✅ [HOOK] Mensagem deletada do cache:', messageId);
+    } catch (error) {
+      console.error('❌ [HOOK] Erro ao deletar mensagem:', error);
+      throw error;
+    }
+  }, [appState.isConnected]);
+
+  const deleteMultipleMessages = useCallback(async (messageIds: string[], conversationId: string) => {
+    try {
+      console.log('🗑️ [HOOK] Deletando múltiplas mensagens:', messageIds.length);
+      
+      if (appState.isConnected) {
+        // Deletar cada mensagem no banco
+        for (const messageId of messageIds) {
+          await supabaseClient.deleteMessagesByConversation(messageId);
+        }
+      }
+
+      // Atualizar cache de mensagens - remover todas as mensagens deletadas
+      setMessagesCache(prev => ({
+        ...prev,
+        [conversationId]: (prev[conversationId] || []).filter(msg => !messageIds.includes(msg.id))
+      }));
+
+      console.log('✅ [HOOK] Múltiplas mensagens deletadas do cache:', messageIds.length);
+    } catch (error) {
+      console.error('❌ [HOOK] Erro ao deletar múltiplas mensagens:', error);
+      throw error;
+    }
+  }, [appState.isConnected]);
+
+  const updateCacheAfterEdit = useCallback((conversationId: string, finalMessages: Message[]) => {
+    console.log('🔄 [HOOK] Atualizando cache após edição:', {
+      conversationId,
+      messageCount: finalMessages.length
+    });
+    
+    setMessagesCache(prev => ({
+      ...prev,
+      [conversationId]: finalMessages
+    }));
+    
+    console.log('✅ [HOOK] Cache atualizado após edição');
+  }, []);
 
   // === OPERAÇÕES DE SYSTEM PROMPTS ===
   const createSystemPrompt = useCallback(async (name: string, content: string, description?: string) => {
@@ -460,6 +592,10 @@ export const useAppState = () => {
     // Operações de mensagens
     getMessagesForConversation,
     addMessage,
+    updateMessage,
+    deleteMessage,
+    deleteMultipleMessages,
+    updateCacheAfterEdit,
     
     // Operações de system prompts
     createSystemPrompt,

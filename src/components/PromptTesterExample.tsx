@@ -117,7 +117,8 @@ Você deve responder como Lucas, o responsável comercial, de forma natural e se
       console.log('🚀 [EXAMPLE] Enviando payload formatado:', payload);
 
       // Enviar para o backend
-      const response = await fetch('http://localhost:3001/api/chat', {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const response = await fetch(`${backendUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -150,7 +151,7 @@ Você deve responder como Lucas, o responsável comercial, de forma natural e se
       // Adicionar mensagem de erro
       const errorMessage: Message = {
         role: 'assistant',
-        content: `❌ **Erro de conexão**: ${error}\n\n🔧 **Soluções:**\n- Verifique se o backend está rodando em http://localhost:3001\n- Configure a GEMINI_API_KEY\n- Tente novamente\n\n📋 **Exemplo funcionando:** Este é um exemplo do Prompt Tester com o formato específico de mensagens que você solicitou.`,
+        content: `❌ **Erro de conexão**: ${error}\n\n🔧 **Soluções:**\n- Verifique se o backend está rodando em ${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}\n- Configure a GEMINI_API_KEY\n- Tente novamente\n\n📋 **Exemplo funcionando:** Este é um exemplo do Prompt Tester com o formato específico de mensagens que você solicitou.`,
         timestamp: new Date().toISOString()
       };
       setMessages(prev => [...prev, errorMessage]);

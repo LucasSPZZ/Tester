@@ -28,6 +28,7 @@ export interface Conversation {
   createdAt: string;
   updatedAt: string;
   isArchived?: boolean;
+  message_count?: number; // ✨ Contagem de mensagens da API
 }
 
 export interface SystemPrompt {

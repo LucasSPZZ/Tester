@@ -58,57 +58,19 @@ function App() {
 
   return (
     <div className="h-screen bg-[#0a0a0a] overflow-hidden">
-      {/* Header de navegação principal */}
-      <div className="bg-[#1a1a1a] border-b border-[#2a2a2a] p-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <h1 className="text-white font-medium">Prompt Tester Studio</h1>
-            {appState.isConnected && (
-              <span className="text-green-500 text-sm flex items-center gap-1">
-                <div className="w-2 h-2 bg-green-500 rounded-full" />
-                Supabase Conectado
-              </span>
-            )}
-          </div>
-          <button
-            onClick={() => setCurrentView('example')}
-            className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
-          >
-            🧪 Ver Exemplo Específico
-          </button>
-        </div>
-      </div>
-
-      {/* Indicador de status de conexão */}
-      {!appState.isConnected && (
-        <div className="bg-yellow-600 text-white text-center py-2 text-sm">
-          <span>⚠️ Modo offline - dados salvos localmente</span>
-          {appState.error && (
-            <button
-              onClick={appState.migrateToSupabase}
-              className="ml-4 px-3 py-1 bg-yellow-700 hover:bg-yellow-800 rounded text-xs transition-colors"
-            >
-              Conectar ao Supabase
-            </button>
-          )}
-        </div>
-      )}
-
-      <div className="h-full">
-        <PromptTester
-          conversations={appState.conversations}
-          systemPrompts={appState.systemPrompts}
-          activeConversationId={appState.activeConversationId}
-          activePromptId={appState.activePromptId}
-          onUpdateConversations={handleUpdateConversations}
-          onUpdateSystemPrompts={handleUpdateSystemPrompts}
-          onSetActiveConversation={appState.setActiveConversation}
-          onSetActivePrompt={appState.setActivePrompt}
-          // Novas props para integração
-          isConnected={appState.isConnected}
-          appState={appState}
-        />
-      </div>
+      <PromptTester
+        conversations={appState.conversations}
+        systemPrompts={appState.systemPrompts}
+        activeConversationId={appState.activeConversationId}
+        activePromptId={appState.activePromptId}
+        onUpdateConversations={handleUpdateConversations}
+        onUpdateSystemPrompts={handleUpdateSystemPrompts}
+        onSetActiveConversation={appState.setActiveConversation}
+        onSetActivePrompt={appState.setActivePrompt}
+        // Novas props para integração
+        isConnected={appState.isConnected}
+        appState={appState}
+      />
     </div>
   );
 }

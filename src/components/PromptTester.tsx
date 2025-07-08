@@ -1,7 +1,47 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MessageCircle, Settings, Plus, Bot, User, Send, Archive, Edit2, Trash2, Save, X, Copy, Download, Upload, Eye, EyeOff, FileText, Clock, Search, Check, Bookmark, BookmarkPlus, HelpCircle } from 'lucide-react';
+import { MessageCircle, Plus, Bot, User, Send, Archive, Edit2, Trash2, Save, X, Copy, Download, Upload, Eye, EyeOff, FileText, Clock, Search, Check, Bookmark, BookmarkPlus } from 'lucide-react';
 import type { Conversation, SystemPrompt, Message, Checkpoint } from '../types/prompt';
 import { useLLMBackend } from '../hooks/useLLMBackend';
+import { type LLMModel } from '../hooks/useSupabaseClient';
+
+// ✨ NOVO: Dados fictícios de modelos populares com custos
+const MOCK_LLM_MODELS: LLMModel[] = [
+  {
+    id: 'anthropic/claude-3.5-sonnet',
+    name: 'Claude 3.5 Sonnet',
+    inputCost: 3.00,  // $3.00 por 1K tokens de input
+    outputCost: 15.00, // $15.00 por 1K tokens de output
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'openai/gpt-4o',
+    name: 'GPT-4o',
+    inputCost: 5.00,  // $5.00 por 1K tokens de input
+    outputCost: 15.00, // $15.00 por 1K tokens de output
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'openai/gpt-4o-mini',
+    name: 'GPT-4o Mini',
+    inputCost: 0.15,  // $0.15 por 1K tokens de input
+    outputCost: 0.60,  // $0.60 por 1K tokens de output
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'google/gemini-pro-1.5',
+    name: 'Gemini Pro 1.5',
+    inputCost: 1.25,  // $1.25 por 1K tokens de input
+    outputCost: 5.00,  // $5.00 por 1K tokens de output
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'meta-llama/llama-3.1-70b-instruct',
+    name: 'Llama 3.1 70B',
+    inputCost: 0.90,  // $0.90 por 1K tokens de input
+    outputCost: 0.90,  // $0.90 por 1K tokens de output
+    createdAt: new Date().toISOString()
+  }
+];
 
 interface PromptTesterProps {
   conversations: Conversation[];
@@ -65,7 +105,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
         const isOnline = await llmBackend.testBackendConnection();
         setBackendStatus(isOnline ? 'online' : 'offline');
         
-        // Verificar novamente a cada 10 segundos
+        // Verificar novamente a cada 15 segundos
         const interval = setInterval(async () => {
           try {
             const isOnline = await llmBackend.testBackendConnection();
@@ -73,7 +113,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
           } catch (error) {
             setBackendStatus('offline');
           }
-        }, 10000);
+        }, 15000);
         
         return () => clearInterval(interval);
       } catch (error) {
@@ -83,6 +123,18 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
     
     checkBackendStatus();
   }, []);
+
+  // ✨ NOVO: Carregar modelos na inicialização para dropdown responsivo
+  useEffect(() => {
+    const initializeModels = async () => {
+      if (appState && appState.supabaseClient && isConnected) {
+        console.log('🚀 Carregando modelos na inicialização...');
+        await loadModels();
+      }
+    };
+    
+    initializeModels();
+  }, [appState, isConnected]);
   
   // Estados para edição de checkpoints
   const [editingCheckpointId, setEditingCheckpointId] = useState<string | null>(null);
@@ -96,7 +148,12 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
     confirmText: string;
     onConfirm: () => void;
     danger?: boolean;
+    allowSkip?: boolean;
   } | null>(null);
+  const [skipDeleteConfirmation, setSkipDeleteConfirmation] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+
 
   // Estados para modal de criação de conversa
   const [showCreateConversationModal, setShowCreateConversationModal] = useState(false);
@@ -110,21 +167,72 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
     const savedModel = localStorage.getItem('openrouter-model');
     return savedModel || 'anthropic/claude-3.5-sonnet';
   });
-  const [isEditingModel, setIsEditingModel] = useState(false);
-  const [modelInputValue, setModelInputValue] = useState(currentModel);
+  // ✨ Removidos estados antigos do seletor simples de modelo
 
   // Estados para dropdown customizado de prompts
   const [showPromptsDropdown, setShowPromptsDropdown] = useState(false);
   const [editingPromptInDropdown, setEditingPromptInDropdown] = useState<SystemPrompt | null>(null);
 
+  // ✨ NOVO: Estados para seletor de modelos LLM
+  const [availableModels, setAvailableModels] = useState<LLMModel[]>(MOCK_LLM_MODELS);
+  const [showModelsDropdown, setShowModelsDropdown] = useState(false);
+  const [showModelEditor, setShowModelEditor] = useState(false);
+  const [editingModel, setEditingModel] = useState<LLMModel | null>(null);
+  const [isCreatingNewModel, setIsCreatingNewModel] = useState(false);
+  
+    // Estados para edição de modelo (apenas campos essenciais)
+  const [modelName, setModelName] = useState('');
+  const [modelInputCost, setModelInputCost] = useState<number>(0);
+  const [modelOutputCost, setModelOutputCost] = useState<number>(0);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editingTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Hook para integração com LLM backend
   const llmBackend = useLLMBackend();
 
   const activeConversation = conversations.find(c => c.id === activeConversationId);
   const activePrompt = systemPrompts.find(p => p.id === activePromptId);
+
+  // ✨ NOVO: Função para carregar modelos do banco
+  const loadModels = async () => {
+    if (appState && appState.supabaseClient && isConnected) {
+      try {
+        console.log('📖 Carregando modelos do banco...');
+        const models = await appState.supabaseClient.getAllModels();
+        console.log('✅ Modelos carregados:', models);
+        
+        if (models.length > 0) {
+          setAvailableModels(models);
+          console.log('🔄 Lista de modelos atualizada com dados do banco');
+        } else {
+          console.log('ℹ️ Nenhum modelo encontrado no banco, mantendo dados mockados');
+        }
+      } catch (error) {
+        console.error('❌ Erro ao carregar modelos:', error);
+        console.log('🔙 Mantendo dados mockados devido ao erro');
+        
+        // Mostrar alerta visual para o usuário
+        if (error instanceof Error && error.message.includes('get_models')) {
+          console.warn('📋 AÇÃO NECESSÁRIA: Criar função get_models no Supabase');
+        }
+      }
+    } else {
+      console.log('⚠️ Supabase não conectado, usando dados mockados');
+    }
+  };
+
+  // ✨ NOVO: Função para trocar conversa e carregar modelos
+  const handleSelectConversation = async (conversationId: string) => {
+    console.log('🔄 Selecionando conversa e carregando modelos:', conversationId);
+    
+    // Trocar conversa
+    onSetActiveConversation(conversationId);
+    
+    // Carregar modelos do banco
+    await loadModels();
+  };
 
   // Filtrar conversas baseado na busca e status de arquivamento
   const filteredConversations = conversations.filter(conversation => {
@@ -234,6 +342,20 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
     loadCheckpoints();
   }, [activeConversationId, isConnected]); // Removido appState das dependências
 
+  // ✨ SINCRONIZAÇÃO: Atualizar conversationMessages quando messagesCache do hook muda
+  useEffect(() => {
+    if (appState && appState.messagesCache && activeConversationId) {
+      const messagesFromCache = appState.messagesCache[activeConversationId];
+      if (messagesFromCache && messagesFromCache.length > 0) {
+        setConversationMessages(prev => ({
+          ...prev,
+          [activeConversationId]: messagesFromCache
+        }));
+        console.log('🔄 [SYNC] Sincronizando cache do hook com interface:', messagesFromCache.length, 'mensagens');
+      }
+    }
+  }, [appState?.messagesCache, activeConversationId]);
+
   // Obter mensagens da conversa ativa (priorizar state local)
   const getActiveConversationMessages = (): Message[] => {
     let messages: Message[] = [];
@@ -280,7 +402,14 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
     confirmText: string;
     onConfirm: () => void;
     danger?: boolean;
+    allowSkip?: boolean;
   }) => {
+    // ✨ OTIMIZAÇÃO: Se é uma deleção e o usuário escolheu pular confirmações, executar diretamente
+    if (config.allowSkip && skipDeleteConfirmation && config.title.includes('Deletar')) {
+      config.onConfirm();
+      return;
+    }
+    
     setConfirmConfig(config);
     setShowConfirmModal(true);
   };
@@ -364,15 +493,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
       messageFilter: messageFilter
     });
 
-    // ✨ NOVO: ETAPA 0 - Adicionar mensagem do usuário imediatamente na interface
-    const tempUserMessage: Message = {
-      id: `temp-user-${Date.now()}`,
-      role: 'user',
-      content: messageContent,
-      timestamp: new Date().toISOString(),
-      conversationId: activeConversation.id
-    };
-
+    // ✨ NOVO: ETAPA 0 - Adicionar apenas mensagem de processamento temporária
     const tempAssistantMessage: Message = {
       id: `temp-assistant-${Date.now()}`,
       role: 'assistant',
@@ -382,8 +503,8 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
       isProcessing: true
     };
 
-    // Adicionar mensagens temporárias imediatamente
-    setTempMessages([tempUserMessage, tempAssistantMessage]);
+    // Adicionar apenas mensagem de processamento temporária (mensagem do usuário será adicionada permanentemente)
+    setTempMessages([tempAssistantMessage]);
 
     try {
       // ETAPA 1: Salvar mensagem do usuário no banco (sempre adiciona ao final)
@@ -392,26 +513,6 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
       if (appState && appState.addMessage && isConnected) {
         console.log('💾 [SEND] Salvando mensagem do usuário no Supabase...');
         userMessage = await appState.addMessage(activeConversation.id, messageContent, 'user');
-        
-        // ✨ NOVO: Atualizar cache local - se há filtro ativo, inserir após o checkpoint
-        setConversationMessages(prev => {
-          const currentMessages = prev[activeConversation.id] || [];
-          if (activeCheckpoint && messageFilter !== null) {
-            // Inserir mensagem após o ponto do checkpoint
-            const newMessages = [...currentMessages];
-            newMessages.splice(messageFilter, 0, userMessage);
-            return {
-              ...prev,
-              [activeConversation.id]: newMessages
-            };
-          } else {
-            // Modo normal - adicionar ao final
-            return {
-              ...prev,
-              [activeConversation.id]: [...currentMessages, userMessage]
-            };
-          }
-        });
         
         console.log('✅ [SEND] Mensagem do usuário salva:', userMessage.id);
       } else {
@@ -490,12 +591,12 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
           newUserMessage: messageContent,
           conversationId: activeConversation.id,
           agentPromptId: activePromptId,
-          model: currentModel // ✨ NOVO: Incluir modelo atual no contexto
+          model: getActiveModel()?.name || currentModel // ✨ CORRIGIDO: Usar nome real do modelo, não UUID
         };
 
         console.log('🔄 [SEND] Enviando para LLM:', {
           systemPromptName: llmContext.systemPrompt.name,
-          model: currentModel,
+          model: getActiveModel()?.name || currentModel,
           historyCount: llmContext.messageHistory.length,
           messagePreview: messageContent.substring(0, 50) + '...',
           checkpointFilter: activeCheckpoint?.name || 'nenhum'
@@ -510,26 +611,6 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
         if (appState && appState.addMessage && isConnected) {
           console.log('💾 [SEND] Salvando resposta do assistant no Supabase...');
           const assistantMessage = await appState.addMessage(activeConversation.id, assistantResponse, 'assistant');
-          
-          // Atualizar cache local - inserir resposta após mensagem do usuário
-          setConversationMessages(prev => {
-            const currentMessages = prev[activeConversation.id] || [];
-            if (activeCheckpoint && messageFilter !== null) {
-              // Inserir resposta após a mensagem do usuário (que foi inserida no checkpoint)
-              const newMessages = [...currentMessages];
-              newMessages.splice(messageFilter + 1, 0, assistantMessage);
-              return {
-                ...prev,
-                [activeConversation.id]: newMessages
-              };
-            } else {
-              // Modo normal - adicionar ao final
-              return {
-                ...prev,
-                [activeConversation.id]: [...currentMessages, assistantMessage]
-              };
-            }
-          });
           
           console.log('✅ [SEND] Resposta do assistant salva:', assistantMessage.id);
         } else {
@@ -586,29 +667,10 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
         console.error('❌ [SEND] Erro no processamento LLM:', llmError);
         
         // Salvar mensagem de erro contextual
-        const errorMessage = `❌ **Erro ao processar com IA**\n\n**Erro:** ${llmError}\n\n**Sua mensagem:** "${messageContent}"\n\n**Agente:** ${activePrompt.name}\n\n**Contexto:** ${messageHistory.length} mensagens anteriores${activeCheckpoint ? `\n\n**Filtro:** ${activeCheckpoint.name} (${messageFilter} mensagens)` : ''}\n\n🔧 **Soluções:**\n- Verifique se o backend está rodando em http://localhost:3001\n- Configure a GEMINI_API_KEY no backend\n- Tente novamente em alguns segundos\n\n💡 **Debug:** O sistema tentou processar sua mensagem com o prompt "${activePrompt.name}" considerando ${activeCheckpoint ? 'o filtro de checkpoint' : 'todo o histórico'} da conversa.`;
+        const errorMessage = `❌ **Erro ao processar com IA**\n\n**Erro:** ${llmError}\n\n**Sua mensagem:** "${messageContent}"\n\n**Agente:** ${activePrompt.name}\n\n**Contexto:** ${messageHistory.length} mensagens anteriores${activeCheckpoint ? `\n\n**Filtro:** ${activeCheckpoint.name} (${messageFilter} mensagens)` : ''}\n\n🔧 **Soluções:**\n- Verifique se o backend está rodando em ${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}\n- Configure a GEMINI_API_KEY no backend\n- Tente novamente em alguns segundos\n\n💡 **Debug:** O sistema tentou processar sua mensagem com o prompt "${activePrompt.name}" considerando ${activeCheckpoint ? 'o filtro de checkpoint' : 'todo o histórico'} da conversa.`;
         
         if (appState && appState.addMessage && isConnected) {
           const assistantMessage = await appState.addMessage(activeConversation.id, errorMessage, 'assistant');
-          // Atualizar cache local - inserir resposta de erro após mensagem do usuário
-          setConversationMessages(prev => {
-            const currentMessages = prev[activeConversation.id] || [];
-            if (activeCheckpoint && messageFilter !== null) {
-              // Inserir resposta de erro após a mensagem do usuário (que foi inserida no checkpoint)
-              const newMessages = [...currentMessages];
-              newMessages.splice(messageFilter + 1, 0, assistantMessage);
-              return {
-                ...prev,
-                [activeConversation.id]: newMessages
-              };
-            } else {
-              // Modo normal - adicionar ao final
-              return {
-                ...prev,
-                [activeConversation.id]: [...currentMessages, assistantMessage]
-              };
-            }
-          });
         } else {
           const assistantMessage: Message = {
             id: (Date.now() + 1).toString(),
@@ -663,19 +725,58 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
   // Deletar conversa
   const deleteConversation = async (conversationId: string) => {
     try {
-      if (appState && appState.deleteConversation && isConnected) {
-        await appState.deleteConversation(conversationId);
-      } else {
-        // Fallback para localStorage
-        const updatedConversations = conversations.filter(c => c.id !== conversationId);
-        onUpdateConversations(updatedConversations);
-        
-        if (activeConversationId === conversationId) {
-          onSetActiveConversation(null);
-        }
+      console.log('🗑️ Deletando conversa:', conversationId);
+      
+      // ✨ Marcar que estamos deletando para evitar salvar o nome automaticamente
+      setIsDeleting(true);
+      
+      // Cancelar edição se estiver editando a conversa que será deletada
+      if (editingConversation === conversationId) {
+        setEditingConversation(null);
+        setEditingConversationName('');
       }
+      
+      // ✨ OTIMIZAÇÃO: Atualização otimista imediata da interface
+      const originalConversations = conversations;
+      const updatedConversations = conversations.filter(c => c.id !== conversationId);
+      onUpdateConversations(updatedConversations);
+      
+      // Resetar conversa ativa se necessário
+      if (activeConversationId === conversationId) {
+        onSetActiveConversation(null);
+      }
+      
+      console.log('✅ Interface atualizada otimisticamente');
+      
+      if (appState && appState.deleteConversation && isConnected) {
+        try {
+          // Deletar no servidor
+          await appState.deleteConversation(conversationId);
+          console.log('✅ Conversa deletada com sucesso');
+          
+          // Aguardar um pouco para garantir que o estado foi atualizado
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+        } catch (serverError) {
+          console.error('❌ Erro no servidor, revertendo mudanças:', serverError);
+          // Reverter mudanças em caso de erro no servidor
+          onUpdateConversations(originalConversations);
+          if (activeConversationId === conversationId) {
+            onSetActiveConversation(conversationId);
+          }
+          throw serverError;
+        }
+      } else {
+        // Modo offline - alterações já foram aplicadas acima
+        console.log('✅ Conversa deletada no modo offline');
+      }
+      
     } catch (error) {
-      console.error('Erro ao deletar conversa:', error);
+      console.error('❌ Erro final ao deletar conversa:', error);
+      // Não fazer throw para não bloquear próximas deleções
+    } finally {
+      // Sempre resetar o estado de deleção
+      setIsDeleting(false);
     }
   };
 
@@ -706,7 +807,14 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
   };
 
   const saveConversationName = async () => {
-    if (!editingConversation || !editingConversationName.trim()) return;
+    if (!editingConversation || isDeleting) return;
+
+    // Se o nome estiver vazio, cancelar a edição
+    if (!editingConversationName.trim()) {
+      setEditingConversation(null);
+      setEditingConversationName('');
+      return;
+    }
 
     try {
       if (appState && appState.updateConversation && isConnected) {
@@ -725,6 +833,9 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
       setEditingConversationName('');
     } catch (error) {
       console.error('Erro ao salvar nome da conversa:', error);
+      // Em caso de erro, também cancelar a edição
+      setEditingConversation(null);
+      setEditingConversationName('');
     }
   };
 
@@ -1176,6 +1287,19 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
     setEditingMessageContent(message.content);
   };
 
+  // ✨ NOVO: Posicionar cursor no final ao iniciar edição de mensagem
+  useEffect(() => {
+    if (editingMessageId && editingTextareaRef.current) {
+      const textarea = editingTextareaRef.current;
+      
+      // Usar setTimeout para garantir que o textarea foi renderizado
+      setTimeout(() => {
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      }, 10);
+    }
+  }, [editingMessageId]);
+
   const saveMessageEdit = async () => {
     if (!editingMessageId || !activeConversation || !editingMessageContent.trim() || !activePrompt) return;
 
@@ -1192,25 +1316,21 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
         return;
       }
 
-      // ETAPA 2: Apagar todas as mensagens posteriores usando delete_checkpoint
+      // ETAPA 2: Deletar todas as mensagens posteriores usando hook otimizado
       const messagesToDelete = currentMessages.slice(editedMessageIndex + 1);
       
-      console.log('🗑️ [EDIT] Apagando mensagens posteriores:', {
+      console.log('🗑️ [EDIT] Deletando mensagens posteriores via hook:', {
         mensagemEditada: editedMessageIndex + 1,
         totalMensagens: currentMessages.length,
-        mensagensParaApagar: messagesToDelete.length
+        mensagensParaApagar: messagesToDelete.length,
+        messageIds: messagesToDelete.map(m => m.id)
       });
 
-      // Apagar mensagens uma por uma usando delete_checkpoint
-      for (const messageToDelete of messagesToDelete) {
-        try {
-          if (appState && appState.deleteMessage && isConnected) {
-            await appState.deleteMessage(messageToDelete.id);
-            console.log('🗑️ [EDIT] Mensagem apagada:', messageToDelete.id);
-          }
-        } catch (error) {
-          console.warn('⚠️ [EDIT] Erro ao apagar mensagem:', messageToDelete.id, error);
-        }
+      // Usar função otimizada do hook que deleta múltiplas mensagens e atualiza cache
+      if (appState && appState.deleteMultipleMessages && messagesToDelete.length > 0) {
+        const messageIds = messagesToDelete.map(msg => msg.id);
+        await appState.deleteMultipleMessages(messageIds, activeConversation.id);
+        console.log('✅ [EDIT] Deleção em lote concluída via hook');
       }
 
       // ETAPA 3: Atualizar a mensagem editada
@@ -1222,12 +1342,21 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
 
       // Atualizar no banco se conectado
       if (appState && appState.updateMessage && isConnected) {
+        console.log('💾 [EDIT] Atualizando mensagem no banco via hook...');
         await appState.updateMessage(editedMessage.id, editingMessageContent.trim());
-        console.log('✏️ [EDIT] Mensagem atualizada no banco:', editedMessage.id);
+        console.log('✏️ [EDIT] Mensagem atualizada no banco via hook:', editedMessage.id);
+      } else {
+        console.log('📱 [EDIT] Modo offline ou função updateMessage não disponível');
       }
 
       // ETAPA 4: Manter apenas mensagens até a editada (inclusive)
       const finalMessages = currentMessages.slice(0, editedMessageIndex).concat([updatedMessage]);
+      
+      console.log('🔄 [EDIT] Mensagens finais após edição:', {
+        mensagensAntes: currentMessages.length,
+        mensagensDepois: finalMessages.length,
+        conversationId: activeConversation.id
+      });
       
       const updatedConversation = {
         ...activeConversation,
@@ -1240,6 +1369,16 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
       );
 
       onUpdateConversations(updatedConversations);
+      
+      // ✨ ATUALIZAR CACHE: Usar hook para sincronizar o cache
+      if (appState && appState.updateCacheAfterEdit) {
+        appState.updateCacheAfterEdit(activeConversation.id, finalMessages);
+      }
+      
+      console.log('🔄 Interface atualizada após edição e deleção de mensagens posteriores');
+      
+      // ✨ AGUARDAR SINCRONIZAÇÃO: Pequena pausa para garantir que o cache foi atualizado
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       // ETAPA 5: Se a mensagem editada foi do usuário, fazer nova requisição para LLM
       if (updatedMessage.role === 'user') {
@@ -1267,12 +1406,12 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
           newUserMessage: editingMessageContent.trim(),
           conversationId: activeConversation.id,
           agentPromptId: activePromptId,
-          model: currentModel
+          model: getActiveModel()?.name || currentModel // ✨ CORRIGIDO: Usar nome real do modelo, não UUID
         };
 
         console.log('🔄 [EDIT] Enviando contexto atualizado para LLM:', {
           systemPromptName: llmContext.systemPrompt.name,
-          model: currentModel,
+          model: getActiveModel()?.name || currentModel,
           historyCount: llmContext.messageHistory.length,
           editedMessage: editingMessageContent.trim().substring(0, 50) + '...'
         });
@@ -1284,19 +1423,10 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
 
         // ETAPA 6: Salvar nova resposta do assistant
         if (appState && appState.addMessage && isConnected) {
-          console.log('💾 [EDIT] Salvando nova resposta no Supabase...');
+          console.log('💾 [EDIT] Salvando nova resposta no Supabase via hook...');
           const assistantMessage = await appState.addMessage(activeConversation.id, assistantResponse, 'assistant');
           
-          // Atualizar cache local
-          setConversationMessages(prev => {
-            const currentMessages = prev[activeConversation.id] || [];
-            return {
-              ...prev,
-              [activeConversation.id]: [...finalMessages, assistantMessage]
-            };
-          });
-          
-          console.log('✅ [EDIT] Nova resposta do assistant salva:', assistantMessage.id);
+          console.log('✅ [EDIT] Nova resposta do assistant salva via hook:', assistantMessage.id);
         } else {
           // Modo offline - adicionar resposta localmente
           console.log('📱 [EDIT] Adicionando resposta local (modo offline)...');
@@ -1308,6 +1438,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
           };
 
           const finalUpdatedMessages = [...finalMessages, assistantMessage];
+          
           const finalUpdatedConversation = {
             ...activeConversation,
             messages: finalUpdatedMessages,
@@ -1318,6 +1449,8 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
             c.id === activeConversation.id ? finalUpdatedConversation : c
           );
           onUpdateConversations(finalUpdatedConversations);
+          
+          console.log('🔄 Interface atualizada (modo offline) com nova resposta do assistant');
         }
       }
 
@@ -1344,23 +1477,71 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
     setEditingMessageContent('');
   };
 
-  const deleteMessage = (messageId: string) => {
+  const deleteMessage = async (messageId: string) => {
     if (!activeConversation) return;
 
-    const currentMessages = getActiveConversationMessages();
-    const updatedMessages = currentMessages.filter(msg => msg.id !== messageId);
-    
-    const updatedConversation = {
-      ...activeConversation,
-      messages: updatedMessages,
-      updatedAt: new Date().toISOString()
-    };
+    try {
+      if (appState && appState.supabaseClient && isConnected) {
+        // ✨ NOVO: Usar delete_messages_by_conversation com p_message_id
+        console.log('🗑️ Deletando mensagem específica via delete_messages_by_conversation:', messageId);
+        
+        // Uma única requisição passando o ID da mensagem
+        await appState.supabaseClient.deleteMessagesByConversation(messageId);
+        
+        console.log('✅ Mensagem deletada via RPC function');
+        
+        // ✨ ATUALIZAÇÃO IMEDIATA: Atualizar cache local de mensagens
+        const currentMessages = getActiveConversationMessages();
+        const updatedMessages = currentMessages.filter(msg => msg.id !== messageId);
+        
+        // Atualizar cache local imediatamente
+        setConversationMessages(prev => ({
+          ...prev,
+          [activeConversation.id]: updatedMessages
+        }));
+        
+        // Atualizar estado global da conversa
+        const updatedConversation = {
+          ...activeConversation,
+          messages: updatedMessages,
+          updatedAt: new Date().toISOString()
+        };
 
-    const updatedConversations = conversations.map(c =>
-      c.id === activeConversation.id ? updatedConversation : c
-    );
+        const updatedConversations = conversations.map(c =>
+          c.id === activeConversation.id ? updatedConversation : c
+        );
 
-    onUpdateConversations(updatedConversations);
+        onUpdateConversations(updatedConversations);
+        
+        console.log('🔄 Interface atualizada após deleção da mensagem:', messageId);
+      } else {
+        // Fallback para localStorage - comportamento original (deletar apenas a mensagem específica)
+        const currentMessages = getActiveConversationMessages();
+        const updatedMessages = currentMessages.filter(msg => msg.id !== messageId);
+        
+        // ✨ ATUALIZAÇÃO IMEDIATA: Atualizar cache local (fallback)
+        setConversationMessages(prev => ({
+          ...prev,
+          [activeConversation.id]: updatedMessages
+        }));
+        
+        const updatedConversation = {
+          ...activeConversation,
+          messages: updatedMessages,
+          updatedAt: new Date().toISOString()
+        };
+
+        const updatedConversations = conversations.map(c =>
+          c.id === activeConversation.id ? updatedConversation : c
+        );
+
+        onUpdateConversations(updatedConversations);
+        
+        console.log('🔄 Interface atualizada (fallback localStorage) após deleção da mensagem:', messageId);
+      }
+    } catch (error) {
+      console.error('❌ Erro ao deletar mensagem:', error);
+    }
   };
 
   const truncateConversationToMessage = (messageId: string) => {
@@ -1472,14 +1653,112 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
      if (!trimmedModel) return;
      
      setCurrentModel(trimmedModel);
-     setModelInputValue(trimmedModel);
      localStorage.setItem('openrouter-model', trimmedModel);
-     setIsEditingModel(false);
    };
 
-   const cancelModelEdit = () => {
-     setModelInputValue(currentModel);
-     setIsEditingModel(false);
+   // ✨ NOVO: Funções para gerenciar modelos LLM
+   const openModelEditor = (model?: LLMModel) => {
+     if (model) {
+       // Editando modelo existente
+       setEditingModel(model);
+       setModelName(model.name);
+       setModelInputCost(model.inputCost);
+       setModelOutputCost(model.outputCost);
+       setIsCreatingNewModel(false);
+     } else {
+       // Criando novo modelo
+       setEditingModel(null);
+       setModelName('');
+       setModelInputCost(0);
+       setModelOutputCost(0);
+       setIsCreatingNewModel(true);
+     }
+     setShowModelEditor(true);
+   };
+
+      const saveModel = async () => {
+     if (!modelName.trim()) return;
+
+     try {
+       if (!appState || !appState.supabaseClient || !isConnected) {
+         console.log('⚠️ Supabase não conectado - não foi possível salvar');
+         return;
+       }
+
+       if (isCreatingNewModel) {
+         // CRIANDO novo modelo
+         console.log('💾 Criando novo modelo:', {
+           name: modelName,
+           inputCost: modelInputCost,
+           outputCost: modelOutputCost
+         });
+
+         const newModel = await appState.supabaseClient.createModel(
+           modelName,
+           modelInputCost,
+           modelOutputCost
+         );
+         
+         console.log('✅ Modelo criado com sucesso:', newModel);
+         
+         // Adicionar à lista de modelos disponíveis
+         setAvailableModels((prev: LLMModel[]) => [...prev, newModel]);
+         
+         // Se for o primeiro modelo, definir como atual
+         if (availableModels.length === 0) {
+           setCurrentModel(newModel.id);
+           localStorage.setItem('openrouter-model', newModel.id);
+         }
+       } else if (editingModel) {
+         // ATUALIZANDO modelo existente
+         console.log('🔄 Atualizando modelo:', {
+           id: editingModel.id,
+           name: modelName,
+           inputCost: modelInputCost,
+           outputCost: modelOutputCost
+         });
+
+         const updatedModel = await appState.supabaseClient.updateModel(
+           editingModel.id,
+           modelName,
+           modelInputCost,
+           modelOutputCost
+         );
+         
+         console.log('✅ Modelo atualizado com sucesso:', updatedModel);
+         
+         // Atualizar na lista de modelos disponíveis
+         setAvailableModels((prev: LLMModel[]) => 
+           prev.map(model => 
+             model.id === editingModel.id ? updatedModel : model
+           )
+         );
+       }
+       
+       // Fechar modal apenas se salvou com sucesso
+       setShowModelEditor(false);
+       setEditingModel(null);
+       setModelName('');
+       setModelInputCost(0);
+       setModelOutputCost(0);
+     } catch (error) {
+       console.error('❌ Erro ao salvar modelo:', error);
+       // Modal permanece aberto para o usuário tentar novamente
+     }
+   };
+
+   const cancelModelEdit2 = () => {
+     setShowModelEditor(false);
+     setEditingModel(null);
+     setModelName('');
+     setModelInputCost(0);
+     setModelOutputCost(0);
+   };
+
+   // ✨ REMOVIDO: deleteModel - vamos focar apenas no CREATE por enquanto
+
+   const getActiveModel = (): LLMModel | undefined => {
+     return availableModels.find(model => model.id === currentModel);
    };
 
   return (
@@ -1488,37 +1767,12 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
       <div className="w-80 bg-[#1a1a1a] border-r border-[#2a2a2a] flex flex-col">
         {/* Header */}
         <div className="p-4 border-b border-[#2a2a2a]">
-          <div className="flex items-center justify-between mb-3">
-            <h1 className="text-white font-semibold">Testador de Prompts</h1>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowHelpModal(true)}
-                className="p-2 text-[#888888] hover:text-white hover:bg-[#2a2a2a] rounded-md transition-colors"
-                title="Ajuda e Instruções"
-              >
-                <HelpCircle className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => openPromptEditor()}
-                className="p-2 text-[#888888] hover:text-white hover:bg-[#2a2a2a] rounded-md transition-colors"
-                title="Gerenciar Prompts"
-              >
-                <Settings className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
+
           
           {/* System Prompt Atual */}
           <div className="mb-3">
-            <div className="flex items-center justify-between mb-1">
+            <div className="mb-1">
               <label className="text-xs text-[#888888]">Prompt Ativo:</label>
-              <button
-                onClick={() => openPromptEditor(activePrompt)}
-                className="text-xs text-emerald-400 hover:text-emerald-300 transition-colors"
-                title="Editar prompt atual"
-              >
-                <Edit2 className="w-3 h-3" />
-              </button>
             </div>
             <div className="relative">
               {/* Dropdown customizado para prompts */}
@@ -1539,12 +1793,12 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
 
               {/* Lista de prompts */}
               {showPromptsDropdown && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded-md shadow-lg z-50 max-h-48 overflow-y-auto">
+                <div className="absolute top-full left-0 right-0 mt-1 dropdown-dark-elegant rounded-lg z-50 max-h-48 overflow-y-auto scrollbar-dark-elegant">
                   {systemPrompts.map(prompt => (
                     <div
                       key={prompt.id}
-                      className={`flex items-center justify-between p-2 hover:bg-[#2a2a2a] transition-colors border-b border-[#333] last:border-b-0 ${
-                        prompt.id === activePromptId ? 'bg-emerald-400/20' : ''
+                      className={`dropdown-item-elegant flex items-center justify-between p-3 ${
+                        prompt.id === activePromptId ? 'bg-emerald-400/20 border-l-2 border-emerald-400' : ''
                       }`}
                     >
                       <div 
@@ -1576,13 +1830,13 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                   ))}
                   
                   {/* Botão para criar novo prompt */}
-                  <div className="p-2 border-t border-[#333]">
+                  <div className="p-2">
                     <button
                       onClick={() => {
                         setShowPromptsDropdown(false);
                         openPromptEditor();
                       }}
-                      className="w-full flex items-center gap-2 p-2 text-emerald-400 hover:bg-emerald-400/10 rounded transition-colors text-sm"
+                      className="dropdown-item-elegant w-full flex items-center gap-2 p-3 text-emerald-400 hover:text-emerald-300 text-sm font-medium"
                     >
                       <Plus className="w-3 h-3" />
                       Criar novo prompt
@@ -1606,25 +1860,11 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
             <Search className="w-4 h-4 absolute left-3 top-2.5 text-[#888888]" />
             <input
               type="text"
-              placeholder="Buscar conversas..."
+              placeholder={`Buscar conversas... (${filteredConversations.length} conversas)`}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded text-white text-sm p-2 pl-10"
             />
-          </div>
-
-          {/* Toggle Arquivadas */}
-          <div className="mb-3 flex items-center justify-between">
-            <button
-              onClick={() => setShowArchivedConversations(!showArchivedConversations)}
-              className="flex items-center gap-2 text-xs text-[#888888] hover:text-white transition-colors"
-            >
-              {showArchivedConversations ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-              {showArchivedConversations ? 'Ocultar arquivadas' : 'Mostrar arquivadas'}
-            </button>
-            <span className="text-xs text-[#888888]">
-              {filteredConversations.length} conversas
-            </span>
           </div>
 
           {/* Botão Nova Conversa */}
@@ -1638,7 +1878,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
         </div>
 
         {/* Lista de Conversas */}
-        <div className="flex-1 overflow-y-auto p-2">
+        <div className="flex-1 overflow-y-auto p-2 scrollbar-conversations">
           {filteredConversations.length === 0 ? (
             <div className="text-center text-[#888888] mt-8">
               <MessageCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -1663,43 +1903,55 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                     ? 'bg-emerald-600 text-white'
                     : 'bg-[#0a0a0a] text-[#888888] hover:bg-[#2a2a2a] hover:text-white'
                 } ${conversation.isArchived ? 'opacity-60' : ''}`}
-                onClick={() => onSetActiveConversation(conversation.id)}
+                onClick={() => handleSelectConversation(conversation.id)}
               >
                 {editingConversation === conversation.id ? (
-                  <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="text"
                       value={editingConversationName}
                       onChange={(e) => setEditingConversationName(e.target.value)}
-                      className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded text-white text-sm p-1"
+                      className="flex-1 bg-[#0a0a0a] border border-emerald-400 rounded text-white text-sm p-2"
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') saveConversationName();
+                        if (e.key === 'Enter') {
+                          saveConversationName();
+                        }
                         if (e.key === 'Escape') {
                           setEditingConversation(null);
                           setEditingConversationName('');
                         }
                       }}
+
                       autoFocus
                     />
-                    <div className="flex gap-1">
-                      <button
-                        onClick={saveConversationName}
-                        className="p-1 text-green-400 hover:text-green-300"
-                        title="Salvar"
-                      >
-                        <Save className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          setEditingConversation(null);
-                          setEditingConversationName('');
-                        }}
-                        className="p-1 text-red-400 hover:text-red-300"
-                        title="Cancelar"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        
+                        // ✨ Preparar para deleção imediatamente
+                        const conversationToDelete = conversation;
+                        
+                        showConfirm({
+                          title: 'Deletar Conversa',
+                          message: `Tem certeza que deseja deletar a conversa "${conversationToDelete.name}"?`,
+                          confirmText: 'Deletar',
+                          onConfirm: () => {
+                            // Cancelar edição antes de deletar
+                            if (editingConversation === conversationToDelete.id) {
+                              setEditingConversation(null);
+                              setEditingConversationName('');
+                            }
+                            deleteConversation(conversationToDelete.id);
+                          },
+                          danger: true,
+                          allowSkip: true
+                        });
+                      }}
+                      className="p-1 text-red-400 hover:text-red-300 transition-colors"
+                      title="Deletar conversa"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 ) : (
                   <>
@@ -1712,7 +1964,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                           )}
                         </div>
                         <p className="text-xs opacity-70">
-                          {conversation.messages.length} mensagens
+                          {conversation.message_count ?? conversation.messages.length} mensagens
                         </p>
                         <div className="flex items-center gap-2 mt-1">
                           <Clock className="w-3 h-3 opacity-50" />
@@ -1722,8 +1974,8 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                         </div>
                       </div>
                       
-                      {/* Menu de ações */}
-                      <div className="opacity-0 group-hover:opacity-100 flex flex-col gap-1">
+                      {/* ✨ NOVO: Apenas ícone de edição */}
+                      <div className="opacity-0 group-hover:opacity-100">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1733,52 +1985,6 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                           title="Editar nome"
                         >
                           <Edit2 className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            duplicateConversation(conversation);
-                          }}
-                          className="p-1 text-green-400 hover:text-green-300 transition-colors"
-                          title="Duplicar conversa"
-                        >
-                          <Copy className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            exportConversation(conversation);
-                          }}
-                          className="p-1 text-yellow-400 hover:text-yellow-300 transition-colors"
-                          title="Exportar conversa"
-                        >
-                          <Download className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleArchiveConversation(conversation.id);
-                          }}
-                          className="p-1 text-orange-400 hover:text-orange-300 transition-colors"
-                          title={conversation.isArchived ? "Desarquivar" : "Arquivar"}
-                        >
-                          <Archive className="w-3 h-3" />
-                        </button>
-                        <button
-                                                  onClick={(e) => {
-                          e.stopPropagation();
-                          showConfirm({
-                            title: 'Deletar Conversa',
-                            message: `Tem certeza que deseja deletar a conversa "${conversation.name}"?`,
-                            confirmText: 'Deletar',
-                            onConfirm: () => deleteConversation(conversation.id),
-                            danger: true
-                          });
-                        }}
-                          className="p-1 text-red-400 hover:text-red-300 transition-colors"
-                          title="Deletar conversa"
-                        >
-                          <Trash2 className="w-3 h-3" />
                         </button>
                       </div>
                     </div>
@@ -1795,92 +2001,124 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
         {activeConversation ? (
           <>
                         {/* Header da Conversa */}
-            <div className="bg-[#1a1a1a] border-b border-[#2a2a2a] px-6 py-3">
+            <div className="bg-[#1a1a1a] border-b border-[#2a2a2a] px-6 py-6">
               <div className="flex items-center justify-between">
                   <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-white font-medium">{activeConversation.name}</h2>
+                    <div className="flex items-baseline gap-6">
+                      <h2 className="text-white font-semibold text-2xl">{activeConversation.name}</h2>
                       {editingMessageId && (
                         <span className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-600/20 text-yellow-400 text-xs rounded">
                           <Edit2 className="w-3 h-3" />
                           Editando mensagem
                         </span>
                       )}
+                      
+                      {/* ✨ NOVO: Seletor Dropdown de Modelos LLM */}
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-[#888888] text-sm">Modelo:</span>
+                        <div className="relative">
+                          <button
+                            onClick={() => {
+                              setShowModelsDropdown(!showModelsDropdown);
+                            }}
+                            className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-3 py-1 text-white text-sm flex items-center gap-2 hover:border-emerald-400 transition-colors min-w-[200px] text-left"
+                          >
+                            <span className="flex-1 truncate">
+                              {getActiveModel()?.name || currentModel}
+                            </span>
+                            <svg 
+                              className={`w-3 h-3 transition-transform ${showModelsDropdown ? 'rotate-180' : ''}`} 
+                              fill="none" 
+                              stroke="currentColor" 
+                              viewBox="0 0 24 24"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </button>
 
-                    </div>
-                    <div className="text-xs text-[#888888] flex items-center gap-2">
-                      <span>Prompt: {activePrompt?.name} • {getActiveConversationMessages().length} mensagens</span>
-                      
-                                             {/* ✨ NOVO: Seletor de Modelo OpenRouter */}
-                       <div className="flex items-center gap-1">
-                         <span className="text-[#666666]">Modelo:</span>
-                         {isEditingModel ? (
-                           <div className="flex items-center gap-1">
-                             <input
-                               type="text"
-                               value={modelInputValue}
-                               onChange={(e) => setModelInputValue(e.target.value)}
-                               onKeyDown={(e) => {
-                                 if (e.key === 'Enter') {
-                                   e.preventDefault();
-                                   updateModel(modelInputValue);
-                                 }
-                                 if (e.key === 'Escape') {
-                                   e.preventDefault();
-                                   cancelModelEdit();
-                                 }
-                               }}
-                               className="bg-[#0a0a0a] border border-emerald-400 rounded px-2 py-1 text-white text-xs w-48 focus:outline-none"
-                               placeholder="ex: anthropic/claude-3.5-sonnet"
-                               autoFocus
-                             />
-                             <button
-                               onClick={() => updateModel(modelInputValue)}
-                               className="p-1 text-green-400 hover:text-green-300 transition-colors"
-                               title="Confirmar"
-                             >
-                               <Check className="w-3 h-3" />
-                             </button>
-                             <button
-                               onClick={cancelModelEdit}
-                               className="p-1 text-red-400 hover:text-red-300 transition-colors"
-                               title="Cancelar"
-                             >
-                               <X className="w-3 h-3" />
-                             </button>
-                           </div>
-                         ) : (
-                           <button
-                             onClick={() => setIsEditingModel(true)}
-                             className="text-emerald-400 hover:text-emerald-300 transition-colors flex items-center gap-1"
-                             title="Clique para alterar modelo"
-                           >
-                             <span className="font-mono text-xs">{currentModel}</span>
-                             <Edit2 className="w-3 h-3" />
-                           </button>
-                         )}
-                       </div>
-                      
-                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs ${
-                        isConnected 
-                          ? 'bg-green-600/20 text-green-400' 
-                          : 'bg-yellow-600/20 text-yellow-400'
-                      }`}>
-                        <span className={`w-2 h-2 rounded-full inline-block ${
-                          isConnected ? 'bg-green-400' : 'bg-yellow-400'
-                        }`} />
-                        {isConnected ? 'Supabase' : 'Offline'}
-                      </span>
+                          {/* Lista de modelos */}
+                          {showModelsDropdown && (
+                            <div className="absolute top-full left-0 right-0 mt-1 dropdown-dark-elegant rounded-lg z-50 max-h-64 overflow-y-auto scrollbar-dark-elegant">
+                              {availableModels.map(model => (
+                                <div
+                                  key={model.id}
+                                  className={`dropdown-item-elegant flex items-center justify-between p-3 ${
+                                    model.id === currentModel ? 'bg-emerald-400/20 border-l-2 border-emerald-400' : ''
+                                  }`}
+                                >
+                                  <div 
+                                    className="flex-1 cursor-pointer min-w-0"
+                                    onClick={() => {
+                                      updateModel(model.id);
+                                      setShowModelsDropdown(false);
+                                    }}
+                                  >
+                                    <div className="font-medium text-white text-sm truncate">{model.name}</div>
+                                    <div className="text-xs text-[#888888] mt-0.5">
+                                      Input: ${model.inputCost}/1K • Output: ${model.outputCost}/1K
+                                    </div>
+                                  </div>
+                                  
+                                  {/* ✨ NOVO: Botão de editar modelo */}
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setShowModelsDropdown(false);
+                                      openModelEditor(model); // Passa o modelo para edição
+                                    }}
+                                    className="ml-2 p-1 text-[#666666] hover:text-emerald-400 transition-colors flex-shrink-0"
+                                    title="Editar modelo"
+                                  >
+                                    <Edit2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                              
+                              {/* Botão para criar novo modelo */}
+                              <div className="p-2">
+                                <button
+                                  onClick={() => {
+                                    setShowModelsDropdown(false);
+                                    openModelEditor();
+                                  }}
+                                  className="dropdown-item-elegant w-full flex items-center gap-2 p-3 text-emerald-400 hover:text-emerald-300 text-sm font-medium"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  Adicionar novo modelo
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Fechar dropdown ao clicar fora */}
+                          {showModelsDropdown && (
+                            <div
+                              className="fixed inset-0 z-40"
+                              onClick={() => setShowModelsDropdown(false)}
+                            />
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {/* Simplificado: Apenas botão básico de checkpoints */}
+                    {/* ✨ NOVO: Indicador de deleções rápidas */}
+                    {skipDeleteConfirmation && (
+                      <button
+                        onClick={() => setSkipDeleteConfirmation(false)}
+                        className="flex items-center gap-1 px-2 py-1 bg-emerald-600/20 text-emerald-400 text-xs rounded hover:bg-emerald-600/30 transition-colors"
+                        title="Clique para reativar confirmações de deleção"
+                      >
+                        <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
+                        <span>Deleções rápidas ativas</span>
+                      </button>
+                    )}
                   </div>
                 </div>
             </div>
 
             {/* Área de Mensagens */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-6 scrollbar-dark-elegant">
                               {getActiveConversationMessages().length === 0 ? (
                 <div className="text-center text-[#888888] mt-16">
                   <Bot className="w-12 h-12 mx-auto mb-4 opacity-50" />
@@ -1933,7 +2171,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                                 title: 'Deletar Mensagem',
                                 message: 'Tem certeza que deseja deletar esta mensagem?',
                                 confirmText: 'Deletar',
-                                onConfirm: () => deleteMessage(message.id),
+                                onConfirm: async () => await deleteMessage(message.id),
                                 danger: true
                               });
                             }}
@@ -1950,6 +2188,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                           <div className="relative">
                             <div className="absolute inset-0 border-2 border-emerald-500 rounded pointer-events-none"></div>
                             <textarea
+                              ref={editingTextareaRef}
                               value={editingMessageContent}
                               onChange={(e) => setEditingMessageContent(e.target.value)}
                               onKeyDown={(e) => {
@@ -1971,7 +2210,6 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                                 lineHeight: 'inherit'
                               }}
                               placeholder="Editando..."
-                              autoFocus
                               disabled={isLoading}
                             />
                             {isLoading && (
@@ -2094,23 +2332,12 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                 </button>
                 
                 <button
-                  onClick={() => openPromptEditor()}
+                  onClick={() => openPromptEditor(activePrompt)}
                   className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 bg-[#2a2a2a] hover:bg-[#3a3a3a] text-white rounded-md transition-colors"
                 >
-                  <Settings className="w-4 h-4" />
+                  <Edit2 className="w-4 h-4" />
                   Gerenciar Prompts
                 </button>
-              </div>
-
-              <div className="mt-8 p-4 bg-[#1a1a1a] rounded-lg text-left">
-                <h3 className="text-white font-medium mb-2 flex items-center gap-2">
-                  <FileText className="w-4 h-4" />
-                  Prompt Ativo
-                </h3>
-                <p className="text-sm mb-2">{activePrompt?.name}</p>
-                <p className="text-xs opacity-70">
-                  {activePrompt?.description || 'Sem descrição'}
-                </p>
               </div>
             </div>
           </div>
@@ -2120,11 +2347,11 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
        {/* Modal de Ajuda */}
        {showHelpModal && (
          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-           <div className="bg-[#1a1a1a] rounded-lg border border-[#2a2a2a] w-full max-w-2xl max-h-[80vh] overflow-y-auto">
+           <div className="bg-[#1a1a1a] rounded-lg border border-[#2a2a2a] w-full max-w-2xl max-h-[80vh] overflow-y-auto scrollbar-dark-elegant">
              {/* Header */}
              <div className="p-6 border-b border-[#2a2a2a] flex items-center justify-between">
                <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-                 <HelpCircle className="w-5 h-5" />
+                 <FileText className="w-5 h-5" />
                  Guia Rápido
                </h2>
                <button
@@ -2167,7 +2394,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                {/* Prompts e Modelos */}
                <div>
                  <h3 className="text-lg font-medium text-white mb-3 flex items-center gap-2">
-                   <Settings className="w-5 h-5 text-green-400" />
+                   <Edit2 className="w-5 h-5 text-green-400" />
                    Prompts e Modelos
                  </h3>
                  <div className="space-y-3">
@@ -2212,7 +2439,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                {/* Fluxo de Teste */}
                <div>
                  <h3 className="text-lg font-medium text-white mb-3 flex items-center gap-2">
-                   <HelpCircle className="w-5 h-5 text-emerald-400" />
+                   <BookmarkPlus className="w-5 h-5 text-emerald-400" />
                    Fluxo de Teste Recomendado
                  </h3>
                  <div className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg p-4">
@@ -2277,7 +2504,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
              </div>
 
              {/* Conteúdo do Modal */}
-             <div className="flex-1 overflow-y-auto p-6">
+             <div className="flex-1 overflow-y-auto p-6 scrollbar-dark-elegant">
                {/* Criar novo checkpoint */}
                <div className="mb-6 p-4 bg-[#0a0a0a] rounded-lg border border-[#2a2a2a]">
                  <h3 className="text-white font-medium mb-3 flex items-center gap-2">
@@ -2550,29 +2777,52 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
 
              {/* Content */}
              <div className="p-6">
-               <p className="text-[#e5e5e5] text-sm leading-relaxed">
+               <p className="text-[#e5e5e5] text-sm leading-relaxed mb-4">
                  {confirmConfig.message}
                </p>
+               
+               {/* ✨ NOVO: Opção para múltiplas deleções */}
+               {confirmConfig.allowSkip && confirmConfig.title.includes('Deletar') && (
+                 <label className="flex items-center gap-2 text-sm text-[#888888] cursor-pointer">
+                   <input
+                     type="checkbox"
+                     checked={skipDeleteConfirmation}
+                     onChange={(e) => setSkipDeleteConfirmation(e.target.checked)}
+                     className="w-4 h-4 text-emerald-600 bg-[#2a2a2a] border-[#444] rounded focus:ring-emerald-500"
+                   />
+                   <span>Não perguntar novamente para deleções (sessão atual)</span>
+                 </label>
+               )}
              </div>
 
              {/* Footer */}
-             <div className="p-6 border-t border-[#2a2a2a] flex justify-end gap-3">
-               <button
-                 onClick={handleCancelConfirm}
-                 className="px-4 py-2 text-sm text-[#888888] hover:text-white bg-[#2a2a2a] hover:bg-[#3a3a3a] rounded-md transition-colors"
-               >
-                 Cancelar
-               </button>
-               <button
-                 onClick={handleConfirm}
-                 className={`px-4 py-2 text-sm text-white rounded-md transition-colors ${
-                   confirmConfig.danger
-                     ? 'bg-red-600 hover:bg-red-700'
-                     : 'bg-emerald-600 hover:bg-emerald-700'
-                 }`}
-               >
-                 {confirmConfig.confirmText}
-               </button>
+             <div className="p-6 border-t border-[#2a2a2a] flex justify-between">
+               {/* Informação sobre múltiplas deleções */}
+               {confirmConfig.allowSkip && skipDeleteConfirmation && (
+                 <div className="flex items-center gap-2 text-xs text-emerald-400">
+                   <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
+                   <span>Deleções rápidas ativadas</span>
+                 </div>
+               )}
+               
+               <div className="flex gap-3 ml-auto">
+                 <button
+                   onClick={handleCancelConfirm}
+                   className="px-4 py-2 text-sm text-[#888888] hover:text-white bg-[#2a2a2a] hover:bg-[#3a3a3a] rounded-md transition-colors"
+                 >
+                   Cancelar
+                 </button>
+                 <button
+                   onClick={handleConfirm}
+                   className={`px-4 py-2 text-sm text-white rounded-md transition-colors ${
+                     confirmConfig.danger
+                       ? 'bg-red-600 hover:bg-red-700'
+                       : 'bg-emerald-600 hover:bg-emerald-700'
+                   }`}
+                 >
+                   {confirmConfig.confirmText}
+                 </button>
+               </div>
              </div>
            </div>
          </div>
@@ -2702,7 +2952,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
             </div>
 
             {/* Conteúdo do Modal */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-6 scrollbar-dark-elegant">
               {/* Lista de Prompts Existentes */}
               {!isCreatingNewPrompt && !editingPrompt && (
                 <div className="space-y-4">
@@ -2860,6 +3110,130 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ✨ NOVO: Modal do Editor de Modelos LLM */}
+      {showModelEditor && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1a1a] rounded-lg border border-[#2a2a2a] w-full max-w-lg flex flex-col">
+            {/* Header do Modal */}
+            <div className="p-6 border-b border-[#2a2a2a] flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-white">
+                {isCreatingNewModel ? 'Adicionar Novo Modelo' : 'Editar Modelo'}
+              </h2>
+              <button
+                onClick={cancelModelEdit2}
+                className="p-2 text-[#888888] hover:text-white hover:bg-[#2a2a2a] rounded-md transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Conteúdo do Modal */}
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-white mb-2">
+                  Nome do Modelo *
+                </label>
+                <input
+                  type="text"
+                  value={modelName}
+                  onChange={(e) => setModelName(e.target.value)}
+                  placeholder="Ex: Claude 3.5 Sonnet"
+                  className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded-md px-3 py-2 text-white placeholder-[#888888] text-sm"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-white mb-2">
+                    Custo Input (por 1K tokens)
+                  </label>
+                  <input
+                    type="text"
+                    value={modelInputCost}
+                    onChange={(e) => setModelInputCost(Number(e.target.value) || 0)}
+                    placeholder="3.00"
+                    className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded-md px-3 py-2 text-white placeholder-[#888888] text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-white mb-2">
+                    Custo Output (por 1K tokens)
+                  </label>
+                  <input
+                    type="text"
+                    value={modelOutputCost}
+                    onChange={(e) => setModelOutputCost(Number(e.target.value) || 0)}
+                    placeholder="15.00"
+                    className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded-md px-3 py-2 text-white placeholder-[#888888] text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Footer do Modal */}
+            <div className="p-6 border-t border-[#2a2a2a] flex justify-between">
+              {/* ✨ Botão de deletar apenas quando editando */}
+                              {!isCreatingNewModel && editingModel ? (
+                <button
+                  onClick={async () => {
+                    try {
+                      if (!appState || !appState.supabaseClient || !isConnected) {
+                        console.log('⚠️ Supabase não conectado - não foi possível deletar');
+                        return;
+                      }
+
+                      console.log('🗑️ Deletando modelo:', editingModel.id);
+                      
+                      // Deletar modelo via RPC
+                      await appState.supabaseClient.deleteModel(editingModel.id);
+                      
+                      console.log('✅ Modelo deletado com sucesso');
+                      
+                      // Remover da lista de modelos disponíveis
+                      setAvailableModels((prev: LLMModel[]) => 
+                        prev.filter(model => model.id !== editingModel.id)
+                      );
+                      
+                      // Se o modelo deletado era o atual, limpar seleção
+                      if (currentModel === editingModel.id) {
+                        setCurrentModel('');
+                        localStorage.removeItem('openrouter-model');
+                      }
+                      
+                      // Fechar modal
+                      setShowModelEditor(false);
+                      setEditingModel(null);
+                      setModelName('');
+                      setModelInputCost(0);
+                      setModelOutputCost(0);
+                    } catch (error) {
+                      console.error('❌ Erro ao deletar modelo:', error);
+                      // Modal permanece aberto em caso de erro
+                    }
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors"
+                  title="Deletar modelo"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Deletar
+                </button>
+              ) : (
+                <div></div>
+              )}
+              
+              <button
+                onClick={saveModel}
+                disabled={!modelName.trim()}
+                className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-[#2a2a2a] disabled:text-[#888888] text-white rounded-md transition-colors"
+              >
+                {isCreatingNewModel ? 'Adicionar' : 'Salvar'}
+              </button>
+            </div>
           </div>
         </div>
       )}

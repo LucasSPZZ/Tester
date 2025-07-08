@@ -16,7 +16,8 @@ export const useAITableGenerator = () => {
 
   const testConnection = async (): Promise<boolean> => {
     try {
-      const response = await fetch('http://localhost:3001/api/health');
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const response = await fetch(`${backendUrl}/api/health`);
       return response.ok;
     } catch (err) {
       console.error('Erro ao testar conexão com backend:', err);
@@ -29,7 +30,8 @@ export const useAITableGenerator = () => {
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:3001/api/generate-table-sql', {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const response = await fetch(`${backendUrl}/api/generate-table-sql`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -71,7 +73,8 @@ export const useAITableGenerator = () => {
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:3001/api/generate-table-sql', {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const response = await fetch(`${backendUrl}/api/generate-table-sql`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -61,7 +61,8 @@ export const useAICodeGenerator = () => {
       
       // Verificar se é erro de conexão
       if (errorMessage.includes('fetch')) {
-        setError('Erro de conexão com o backend. Verifique se o servidor está rodando em http://localhost:3001');
+        const currentBackendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+        setError(`Erro de conexão com o backend. Verifique se o servidor está rodando em ${currentBackendUrl}`);
       } else {
         setError(errorMessage);
       }
@@ -77,7 +78,8 @@ export const useAICodeGenerator = () => {
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:3001/api/generate-sql', {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const response = await fetch(`${backendUrl}/api/generate-sql`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -115,7 +117,8 @@ export const useAICodeGenerator = () => {
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:3001/api/generate-sql', {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const response = await fetch(`${backendUrl}/api/generate-sql`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { SystemPrompt, Message } from '../types/prompt';
 
-const BACKEND_URL = 'http://localhost:3001'; // URL do seu backend
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'; // URL do seu backend
 
 interface LLMOptions {
   temperature?: number;
