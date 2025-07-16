@@ -80,7 +80,7 @@ async function callOpenRouter(messages, model = 'google/gemini-flash-1.5', optio
   const headers = new Headers();
   headers.set('Authorization', `Bearer ${OPENROUTER_API_KEY}`);
   headers.set('Content-Type', 'application/json');
-  headers.set('HTTP-Referer', 'http://localhost:3001');
+  headers.set('HTTP-Referer', process.env.BACKEND_URL || 'http://localhost:3001');
   headers.set('X-Title', 'RPCraft Backend');
 
   console.log('📋 [DEBUG] Headers sendo enviados:', {
@@ -838,28 +838,77 @@ app.post('/api/chat', async (req, res) => {
   } catch (error) {
     console.log('\n❌ ERRO NO CHAT GERAL (OpenRouter):');
     console.log('-'.repeat(80));
-    console.error('Detalhes do erro:', error);
+    console.error('🚨 Tipo do erro:', error.constructor.name);
+    console.error('📄 Mensagem do erro:', error.message);
+    console.error('📍 Stack trace:', error.stack);
+    console.error('🔍 Detalhes completos:', JSON.stringify(error, null, 2));
     console.log('-'.repeat(80));
+    
+    // Logs adicionais para debug
+    console.log('📊 DADOS DO REQUEST NO MOMENTO DO ERRO:');
+    console.log('- URL:', req.url);
+    console.log('- Method:', req.method);
+    console.log('- Headers:', JSON.stringify(req.headers, null, 2));
+    console.log('- Body:', JSON.stringify(req.body, null, 2));
+    console.log('- Query:', JSON.stringify(req.query, null, 2));
     
     // Tratar diferentes tipos de erro
     if (error.message.includes('API key') || error.message.includes('401')) {
+      console.error('🔑 Erro de autenticação com OpenRouter');
       return res.status(401).json({
         success: false,
-        error: 'Chave da API do OpenRouter inválida ou não configurada'
+        error: 'Chave da API do OpenRouter inválida ou não configurada',
+        debug: {
+          error_type: 'authentication',
+          original_error: error.message,
+          timestamp: new Date().toISOString()
+        }
       });
     }
     
     if (error.message.includes('quota') || error.message.includes('429')) {
+      console.error('📊 Erro de quota/rate limit');
       return res.status(429).json({
         success: false,
-        error: 'Quota da API excedida. Tente novamente mais tarde.'
+        error: 'Quota da API excedida. Tente novamente mais tarde.',
+        debug: {
+          error_type: 'rate_limit',
+          original_error: error.message,
+          timestamp: new Date().toISOString()
+        }
       });
     }
     
+    if (error.message.includes('row must be included')) {
+      console.error('🗄️ Erro relacionado ao banco de dados');
+      return res.status(400).json({
+        success: false,
+        error: 'Erro de consulta ao banco de dados',
+        debug: {
+          error_type: 'database',
+          original_error: error.message,
+          details: 'Este erro geralmente indica problema com paginação ou consulta vazia',
+          timestamp: new Date().toISOString()
+        }
+      });
+    }
+    
+    console.error('❓ Erro genérico não categorizado');
     res.status(500).json({
       success: false,
       error: 'Erro interno do servidor (OpenRouter)',
-      details: error.message
+      debug: {
+        error_type: 'internal_server_error',
+        original_error: error.message,
+        stack: error.stack,
+        request_data: {
+          url: req.url,
+          method: req.method,
+          body_keys: Object.keys(req.body || {}),
+          query: req.query
+        },
+        timestamp: new Date().toISOString()
+      }
     });
   }
 });
@@ -959,30 +1008,139 @@ app.post('/api/chat-sql', async (req, res) => {
   } catch (error) {
     console.log('\n❌ ERRO NO CHAT SQL (OpenRouter):');
     console.log('-'.repeat(80));
-    console.error('Detalhes do erro:', error);
+    console.error('🚨 Tipo do erro:', error.constructor.name);
+    console.error('📄 Mensagem do erro:', error.message);
+    console.error('📍 Stack trace:', error.stack);
+    console.error('🔍 Detalhes completos:', JSON.stringify(error, null, 2));
     console.log('-'.repeat(80));
+    
+    // Logs adicionais para debug
+    console.log('📊 DADOS DO REQUEST NO MOMENTO DO ERRO:');
+    console.log('- URL:', req.url);
+    console.log('- Method:', req.method);
+    console.log('- Headers:', JSON.stringify(req.headers, null, 2));
+    console.log('- Body:', JSON.stringify(req.body, null, 2));
+    console.log('- Query:', JSON.stringify(req.query, null, 2));
     
     // Tratar diferentes tipos de erro
     if (error.message.includes('API key') || error.message.includes('401')) {
+      console.error('🔑 Erro de autenticação com OpenRouter');
       return res.status(401).json({
         success: false,
-        error: 'Chave da API do OpenRouter inválida ou não configurada'
+        error: 'Chave da API do OpenRouter inválida ou não configurada',
+        debug: {
+          error_type: 'authentication',
+          original_error: error.message,
+          timestamp: new Date().toISOString()
+        }
       });
     }
     
     if (error.message.includes('quota') || error.message.includes('429')) {
+      console.error('📊 Erro de quota/rate limit');
       return res.status(429).json({
         success: false,
-        error: 'Quota da API excedida. Tente novamente mais tarde.'
+        error: 'Quota da API excedida. Tente novamente mais tarde.',
+        debug: {
+          error_type: 'rate_limit',
+          original_error: error.message,
+          timestamp: new Date().toISOString()
+        }
       });
     }
     
+    if (error.message.includes('row must be included')) {
+      console.error('🗄️ Erro relacionado ao banco de dados');
+      return res.status(400).json({
+        success: false,
+        error: 'Erro de consulta ao banco de dados',
+        debug: {
+          error_type: 'database',
+          original_error: error.message,
+          details: 'Este erro geralmente indica problema com paginação ou consulta vazia',
+          timestamp: new Date().toISOString()
+        }
+      });
+    }
+    
+    console.error('❓ Erro genérico não categorizado');
     res.status(500).json({
       success: false,
       error: 'Erro interno do servidor (OpenRouter)',
-      details: error.message
+      debug: {
+        error_type: 'internal_server_error',
+        original_error: error.message,
+        stack: error.stack,
+        request_data: {
+          url: req.url,
+          method: req.method,
+          body_keys: Object.keys(req.body || {}),
+          query: req.query
+        },
+        timestamp: new Date().toISOString()
+      }
     });
   }
+});
+
+// 🔍 MIDDLEWARE PARA DEBUG: Capturar requisições para endpoints não encontrados
+app.use('*', (req, res, next) => {
+  console.log('\n🚨 REQUISIÇÃO PARA ENDPOINT NÃO ENCONTRADO:');
+  console.log('-'.repeat(80));
+  console.log('📍 URL solicitada:', req.originalUrl);
+  console.log('🔧 Método HTTP:', req.method);
+  console.log('📅 Timestamp:', new Date().toISOString());
+  console.log('📊 Headers da requisição:', JSON.stringify(req.headers, null, 2));
+  
+  if (req.body && Object.keys(req.body).length > 0) {
+    console.log('📋 Body da requisição:', JSON.stringify(req.body, null, 2));
+  }
+  
+  if (req.query && Object.keys(req.query).length > 0) {
+    console.log('❓ Query params:', JSON.stringify(req.query, null, 2));
+  }
+  
+  console.log('\n📜 ENDPOINTS DISPONÍVEIS:');
+  console.log('✅ GET  /api/health');
+  console.log('✅ GET  /api/test-openrouter');
+  console.log('✅ POST /api/chat');
+  console.log('✅ POST /api/chat-sql');
+  console.log('✅ POST /api/generate-sql');
+  console.log('✅ POST /api/understand-function');
+  console.log('✅ POST /api/generate-table-sql');
+  
+  if (req.originalUrl.includes('/api/v1/chatbot/chat')) {
+    console.log('\n🎯 DETECTADO: Tentativa de acesso ao endpoint inexistente /api/v1/chatbot/chat');
+    console.log('💡 SUGESTÃO: Use /api/chat ou /api/chat-sql');
+    console.log('🔧 FORMATO CORRETO:');
+    console.log('   POST https://ade37c329567.ngrok-free.app/api/chat');
+    console.log('   Content-Type: application/json');
+    console.log('   Body: { "messages": [...], "options": {...} }');
+  }
+  
+  console.log('-'.repeat(80));
+  
+  res.status(404).json({
+    success: false,
+    error: 'Endpoint não encontrado',
+    debug: {
+      requested_url: req.originalUrl,
+      method: req.method,
+      available_endpoints: [
+        'GET /api/health',
+        'GET /api/test-openrouter', 
+        'POST /api/chat',
+        'POST /api/chat-sql',
+        'POST /api/generate-sql',
+        'POST /api/understand-function',
+        'POST /api/generate-table-sql'
+      ],
+      suggestion: req.originalUrl.includes('/api/v1/chatbot/chat') ? 
+        'Use /api/chat ou /api/chat-sql em vez de /api/v1/chatbot/chat' : 
+        'Verifique se a URL está correta',
+      timestamp: new Date().toISOString()
+    }
+  });
 });
 
 // Iniciar servidor

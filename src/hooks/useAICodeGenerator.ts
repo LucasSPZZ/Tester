@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { getCurrentBackendUrl } from '../config/backend';
 import type { DatabaseStructure, SupabaseConnection } from '../types/database';
 
 interface GenerateSQLRequest {
@@ -23,7 +24,7 @@ export const useAICodeGenerator = () => {
     setError(null);
 
     try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const backendUrl = getCurrentBackendUrl();
       
       const response = await fetch(`${backendUrl}/api/generate-sql`, {
         method: 'POST',
@@ -61,7 +62,7 @@ export const useAICodeGenerator = () => {
       
       // Verificar se é erro de conexão
       if (errorMessage.includes('fetch')) {
-        const currentBackendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+        const currentBackendUrl = getCurrentBackendUrl();
         setError(`Erro de conexão com o backend. Verifique se o servidor está rodando em ${currentBackendUrl}`);
       } else {
         setError(errorMessage);
@@ -78,7 +79,7 @@ export const useAICodeGenerator = () => {
     setError(null);
 
     try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const backendUrl = getCurrentBackendUrl();
       const response = await fetch(`${backendUrl}/api/generate-sql`, {
         method: 'POST',
         headers: {
@@ -117,7 +118,7 @@ export const useAICodeGenerator = () => {
     setError(null);
 
     try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const backendUrl = getCurrentBackendUrl();
       const response = await fetch(`${backendUrl}/api/generate-sql`, {
         method: 'POST',
         headers: {
@@ -155,7 +156,7 @@ export const useAICodeGenerator = () => {
   // Testar conexão com o backend
   const testConnection = async (): Promise<boolean> => {
     try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const backendUrl = getCurrentBackendUrl();
       
       const response = await fetch(`${backendUrl}/api/health`);
       

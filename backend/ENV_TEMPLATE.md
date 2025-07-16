@@ -10,6 +10,9 @@ Crie um arquivo `.env` na pasta `backend` com o seguinte conteúdo:
 # Backend Configuration
 PORT=3001
 
+# Backend URL (use ngrok quando necessário)
+BACKEND_URL=http://localhost:3001
+
 # OpenRouter API Key (obtenha em: https://openrouter.ai/keys)
 OPENROUTER_API_KEY=sk-or-v1-sua-chave-openrouter-aqui
 

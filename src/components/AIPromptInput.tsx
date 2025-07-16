@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Send, Loader2, AlertCircle, Sparkles, CheckCircle, Play } from 'lucide-react';
+import { getCurrentBackendUrl } from '../config/backend';
 
 interface AIPromptInputProps {
   onSubmit: (prompt: string) => Promise<void>;
@@ -45,7 +46,7 @@ export const AIPromptInput: React.FC<AIPromptInputProps> = ({
 
   const checkBackendStatus = async () => {
     try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const backendUrl = getCurrentBackendUrl();
       const response = await fetch(`${backendUrl}/api/health`);
       const result = await response.json();
       setBackendOnline(result.status === 'ok');

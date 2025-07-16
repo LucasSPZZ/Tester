@@ -5,8 +5,18 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   // Configurar base path para deploy em subdiretório
-  // base: '/prompt-tester/',
+  base: '/tester/',
   optimizeDeps: {
     exclude: ['lucide-react'],
+  },
+  build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
+    // Garantir que os assets sejam referenciados corretamente
+    rollupOptions: {
+      output: {
+        manualChunks: undefined,
+      },
+    },
   },
 });

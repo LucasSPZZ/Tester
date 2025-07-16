@@ -3,6 +3,7 @@ import { MessageCircle, Plus, Bot, User, Send, Archive, Edit2, Trash2, Save, X, 
 import type { Conversation, SystemPrompt, Message, Checkpoint } from '../types/prompt';
 import { useLLMBackend } from '../hooks/useLLMBackend';
 import { type LLMModel } from '../hooks/useSupabaseClient';
+import { getCurrentBackendUrl } from '../config/backend';
 
 // ✨ NOVO: Dados fictícios de modelos populares com custos
 const MOCK_LLM_MODELS: LLMModel[] = [
@@ -667,7 +668,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
         console.error('❌ [SEND] Erro no processamento LLM:', llmError);
         
         // Salvar mensagem de erro contextual
-        const errorMessage = `❌ **Erro ao processar com IA**\n\n**Erro:** ${llmError}\n\n**Sua mensagem:** "${messageContent}"\n\n**Agente:** ${activePrompt.name}\n\n**Contexto:** ${messageHistory.length} mensagens anteriores${activeCheckpoint ? `\n\n**Filtro:** ${activeCheckpoint.name} (${messageFilter} mensagens)` : ''}\n\n🔧 **Soluções:**\n- Verifique se o backend está rodando em ${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}\n- Configure a GEMINI_API_KEY no backend\n- Tente novamente em alguns segundos\n\n💡 **Debug:** O sistema tentou processar sua mensagem com o prompt "${activePrompt.name}" considerando ${activeCheckpoint ? 'o filtro de checkpoint' : 'todo o histórico'} da conversa.`;
+        const errorMessage = `❌ **Erro ao processar com IA**\n\n**Erro:** ${llmError}\n\n**Sua mensagem:** "${messageContent}"\n\n**Agente:** ${activePrompt.name}\n\n**Contexto:** ${messageHistory.length} mensagens anteriores${activeCheckpoint ? `\n\n**Filtro:** ${activeCheckpoint.name} (${messageFilter} mensagens)` : ''}\n\n🔧 **Soluções:**\n- Verifique se o backend está rodando em ${getCurrentBackendUrl()}\n- Configure a GEMINI_API_KEY no backend\n- Tente novamente em alguns segundos\n\n💡 **Debug:** O sistema tentou processar sua mensagem com o prompt "${activePrompt.name}" considerando ${activeCheckpoint ? 'o filtro de checkpoint' : 'todo o histórico'} da conversa.`;
         
         if (appState && appState.addMessage && isConnected) {
           const assistantMessage = await appState.addMessage(activeConversation.id, errorMessage, 'assistant');
@@ -1688,11 +1689,11 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
        if (isCreatingNewModel) {
          // CRIANDO novo modelo
          console.log('💾 Criando novo modelo:', {
-           name: modelName,
-           inputCost: modelInputCost,
-           outputCost: modelOutputCost
-         });
-
+         name: modelName,
+         inputCost: modelInputCost,
+         outputCost: modelOutputCost
+       });
+       
          const newModel = await appState.supabaseClient.createModel(
            modelName,
            modelInputCost,
@@ -3179,7 +3180,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
             <div className="p-6 border-t border-[#2a2a2a] flex justify-between">
               {/* ✨ Botão de deletar apenas quando editando */}
                               {!isCreatingNewModel && editingModel ? (
-                <button
+              <button
                   onClick={async () => {
                     try {
                       if (!appState || !appState.supabaseClient || !isConnected) {
@@ -3221,7 +3222,7 @@ export const PromptTester: React.FC<PromptTesterProps> = ({
                 >
                   <Trash2 className="w-4 h-4" />
                   Deletar
-                </button>
+              </button>
               ) : (
                 <div></div>
               )}

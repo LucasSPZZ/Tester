@@ -3,6 +3,7 @@ import type { DatabaseFunction, DatabaseStructure, SupabaseConnection } from '..
 import { useAICodeGenerator } from '../hooks/useAICodeGenerator';
 import { useSQLExecutor } from '../hooks/useSQLExecutor';
 import { useFunctionTester } from '../hooks/useFunctionTester';
+import { getCurrentBackendUrl } from '../config/backend';
 import {
   FunctionHeader,
   CodePreview,
@@ -238,7 +239,7 @@ $$;`
     clearError();
 
     try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const backendUrl = getCurrentBackendUrl();
       
       const response = await fetch(`${backendUrl}/api/understand-function`, {
         method: 'POST',

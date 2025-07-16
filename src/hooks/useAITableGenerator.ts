@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { getCurrentBackendUrl } from '../config/backend';
 import type { DatabaseStructure, SupabaseConnection } from '../types/database';
 
 interface TableGeneratorError {
@@ -16,7 +17,7 @@ export const useAITableGenerator = () => {
 
   const testConnection = async (): Promise<boolean> => {
     try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const backendUrl = getCurrentBackendUrl();
       const response = await fetch(`${backendUrl}/api/health`);
       return response.ok;
     } catch (err) {
@@ -30,7 +31,7 @@ export const useAITableGenerator = () => {
     setError(null);
 
     try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const backendUrl = getCurrentBackendUrl();
       const response = await fetch(`${backendUrl}/api/generate-table-sql`, {
         method: 'POST',
         headers: {
@@ -73,7 +74,7 @@ export const useAITableGenerator = () => {
     setError(null);
 
     try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+      const backendUrl = getCurrentBackendUrl();
       const response = await fetch(`${backendUrl}/api/generate-table-sql`, {
         method: 'POST',
         headers: {

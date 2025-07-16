@@ -1,0 +1,23 @@
+# Configuração para a raiz do domínio
+RewriteEngine On
+
+# Configurar MIME types corretos
+AddType application/javascript .js
+AddType application/javascript .mjs
+AddType text/css .css
+AddType application/json .json
+
+# Redirecionar para o subdiretório tester se estiver na raiz
+# RewriteCond %{REQUEST_URI} ^/$
+# RewriteRule ^(.*)$ /tester/$1 [R=301,L]
+
+# Para SPAs no subdiretório /tester/
+RewriteCond %{REQUEST_URI} ^/tester/
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^tester/(.*)$ /tester/index.html [L]
+
+# Permitir acesso direto aos assets
+RewriteCond %{REQUEST_URI} ^/tester/assets/
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule . - [L] 
